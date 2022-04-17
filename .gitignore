@@ -24,4 +24,6 @@ rls*.log
 .cargo-remote.toml
 *.bin
 *.iml
-scripts/ci/node-template-release/Cargo.lock
+.maintain/node-template-release/Cargo.lock
+*.patch
+*.log

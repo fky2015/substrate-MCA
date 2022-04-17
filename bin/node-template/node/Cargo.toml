@@ -19,10 +19,16 @@ name = "node-template"
 [dependencies]
 clap = { version = "3.1.6", features = ["derive"] }
 
-sc-cli = { version = "0.10.0-dev", path = "../../../client/cli", features = ["wasmtime"] }
+sc-cli = { version = "0.10.0-dev", path = "../../../client/cli", features = [
+  "wasmtime",
+] }
 sp-core = { version = "6.0.0", path = "../../../primitives/core" }
-sc-executor = { version = "0.10.0-dev", path = "../../../client/executor", features = ["wasmtime"] }
-sc-service = { version = "0.10.0-dev", path = "../../../client/service", features = ["wasmtime"] }
+sc-executor = { version = "0.10.0-dev", path = "../../../client/executor", features = [
+  "wasmtime",
+] }
+sc-service = { version = "0.10.0-dev", path = "../../../client/service", features = [
+  "wasmtime",
+] }
 sc-telemetry = { version = "4.0.0-dev", path = "../../../client/telemetry" }
 sc-keystore = { version = "4.0.0-dev", path = "../../../client/keystore" }
 sc-transaction-pool = { version = "4.0.0-dev", path = "../../../client/transaction-pool" }
@@ -32,7 +38,9 @@ sp-consensus-aura = { version = "0.10.0-dev", path = "../../../primitives/consen
 sp-consensus = { version = "0.10.0-dev", path = "../../../primitives/consensus/common" }
 sc-consensus = { version = "0.10.0-dev", path = "../../../client/consensus/common" }
 sc-finality-grandpa = { version = "0.10.0-dev", path = "../../../client/finality-grandpa" }
-sp-finality-grandpa = { version = "4.0.0-dev", path = "../../../primitives/finality-grandpa" }
+sc-finality-pbft = { version = "0.1.0", path = "../../../client/finality-pbft" }
+# sp-finality-grandpa = { version = "4.0.0-dev", path = "../../../primitives/finality-grandpa" }
+sp-finality-pbft = { version = "0.1.0", path = "../../../primitives/finality-pbft" }
 sc-client-api = { version = "4.0.0-dev", path = "../../../client/api" }
 sp-runtime = { version = "6.0.0", path = "../../../primitives/runtime" }
 sp-timestamp = { version = "4.0.0-dev", path = "../../../primitives/timestamp" }

@@ -225,6 +225,8 @@ members = [
 	"utils/frame/generate-bags/node-runtime",
 	"utils/prometheus",
 	"utils/wasm-builder",
+  "primitives/finality-pbft",
+  "client/finality-pbft",
 ]
 
 # The list of dependencies below (which can be both direct and indirect dependencies) are crates
@@ -301,3 +303,6 @@ inherits = "release"
 lto = "fat"
 # https://doc.rust-lang.org/rustc/codegen-options/index.html#codegen-units
 codegen-units = 1
+
+[patch.crates-io]
+finality-grandpa = { path = "../leader-consensus" }
