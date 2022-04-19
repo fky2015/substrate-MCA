@@ -4,6 +4,7 @@ use sc_consensus::shared_data::SharedData;
 use sp_finality_pbft::AuthorityList;
 
 /// A shared authority set.
+#[derive(Clone)]
 pub struct SharedAuthoritySet<H, N> {
 	inner: SharedData<AuthoritySet<H, N>>,
 }

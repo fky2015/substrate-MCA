@@ -1,6 +1,7 @@
 use std::{marker::PhantomData, pin::Pin, sync::Arc, time::Duration};
 
 use authorities::SharedAuthoritySet;
+use aux_schema::PersistentData;
 use communication::{Network as NetworkT, NetworkBridge};
 use environment::{Environment, SharedVoterSetState};
 use finality_grandpa::{
@@ -44,13 +45,7 @@ pub(crate) mod until_imported;
 /// A global communication input stream for commits and catch up messages. Not
 /// exposed publicly, used internally to simplify types in the communication
 /// layer.
-type GlobalCommunication<Block> = finality_grandpa::leader::GlobalMessage<AuthorityId>;
-
-/// Persistent data kept between runs.
-pub(crate) struct PersistentData<Block: BlockT> {
-	pub(crate) authority_set: SharedAuthoritySet<Block::Hash, NumberFor<Block>>,
-	pub(crate) set_state: SharedVoterSetState<Block>,
-}
+type GlobalCommunication = finality_grandpa::leader::GlobalMessage<AuthorityId>;
 
 /// Link between the block importer and the background voter.
 pub struct LinkHalf<Block: BlockT, C, SC> {
@@ -225,9 +220,9 @@ fn global_communication<BE, Block: BlockT, C, N>(
 	metrics: Option<until_imported::Metrics>,
 ) -> (
 	impl Stream<
-		Item = Result<GlobalCommunication<Block>, CommandOrError<Block::Hash, NumberFor<Block>>>,
+		Item = Result<GlobalCommunication, CommandOrError<Block::Hash, NumberFor<Block>>>,
 	>,
-	impl Sink<GlobalCommunication<Block>, Error = CommandOrError<Block::Hash, NumberFor<Block>>>,
+	impl Sink<GlobalCommunication, Error = CommandOrError<Block::Hash, NumberFor<Block>>>,
 )
 where
 	BE: Backend<Block> + 'static,
@@ -485,8 +480,8 @@ where
 
 				// not racing because old voter is shut down.
 				self.env.update_voter_set_state(|voter_set_state| {
-					let completed_rounds = voter_set_state.completed_rounds();
-					let set_state = VoterSetState::Paused { completed_rounds };
+					let completed_views = voter_set_state.completed_views();
+					let set_state = VoterSetState::Paused { completed_views };
 
 					aux_schema::write_voter_set_state(&*self.env.client, &set_state)?;
 					Ok(Some(set_state))

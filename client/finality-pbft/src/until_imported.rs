@@ -384,14 +384,14 @@ pub(crate) type UntilVoteTargetImported<Block, BlockStatus, BlockSyncRequester, 
 /// are waiting on for the same message (i.e. other `BlockGlobalMessage` instances with the same
 /// `inner`).
 pub(crate) struct BlockGlobalMessage<Block: BlockT> {
-	inner: Arc<Mutex<Option<GlobalCommunication<Block>>>>,
+	inner: Arc<Mutex<Option<GlobalCommunication>>>,
 	target_number: NumberFor<Block>,
 }
 
 impl<Block: BlockT> Unpin for BlockGlobalMessage<Block> {}
 
 impl<Block: BlockT> BlockUntilImported<Block> for BlockGlobalMessage<Block> {
-	type Blocked = GlobalCommunication<Block>;
+	type Blocked = GlobalCommunication;
 
 	fn needs_waiting<BlockStatus: BlockStatusT<Block>>(
 		input: Self::Blocked,
