@@ -45,7 +45,9 @@ pub(crate) mod until_imported;
 /// A global communication input stream for commits and catch up messages. Not
 /// exposed publicly, used internally to simplify types in the communication
 /// layer.
-type GlobalCommunication = finality_grandpa::leader::GlobalMessage<AuthorityId>;
+type GlobalCommunication = leader::GlobalMessage<AuthorityId>;
+
+pub type GlobalMessage = leader::GlobalMessage<AuthorityId>;
 
 /// Link between the block importer and the background voter.
 pub struct LinkHalf<Block: BlockT, C, SC> {
@@ -554,6 +556,54 @@ impl Config {
 	}
 }
 
+/// Errors that can occur while voting in GRANDPA.
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+	/// An error within grandpa.
+	#[error("grandpa error: {0}")]
+	Grandpa(PbftError),
+
+	/// A network error.
+	#[error("network error: {0}")]
+	Network(String),
+
+	/// A blockchain error.
+	#[error("blockchain error: {0}")]
+	Blockchain(String),
+
+	/// Could not complete a round on disk.
+	#[error("could not complete a round on disk: {0}")]
+	Client(ClientError),
+
+	/// Could not sign outgoing message
+	#[error("could not sign outgoing message: {0}")]
+	Signing(String),
+
+	/// An invariant has been violated (e.g. not finalizing pending change blocks in-order)
+	#[error("safety invariant has been violated: {0}")]
+	Safety(String),
+
+	/// A timer failed to fire.
+	#[error("a timer failed to fire: {0}")]
+	Timer(std::io::Error),
+
+	/// A runtime api request failed.
+	#[error("runtime API request failed: {0}")]
+	RuntimeApi(sp_api::ApiError),
+}
+
+impl From<PbftError> for Error {
+	fn from(e: PbftError) -> Self {
+		Error::Grandpa(e)
+	}
+}
+
+impl From<ClientError> for Error {
+	fn from(e: ClientError) -> Self {
+		Error::Client(e)
+	}
+}
+
 pub type SignedMessage<Block> = leader::SignedMessage<
 	NumberFor<Block>,
 	<Block as BlockT>::Hash,
@@ -576,7 +626,6 @@ pub struct SharedVoterState<Block: BlockT> {
 	>,
 }
 
-pub type GlobalMessage<Block> = leader::GlobalMessage<AuthorityId>;
 
 /// A new authority set along with the canonical block it changed at.
 #[derive(Debug)]
