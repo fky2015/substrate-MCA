@@ -3,12 +3,12 @@ use std::{marker::PhantomData, pin::Pin, sync::Arc, time::Duration};
 use authorities::SharedAuthoritySet;
 use aux_schema::PersistentData;
 use communication::{Network as NetworkT, NetworkBridge};
-use environment::{Environment, SharedVoterSetState};
+use environment::{Environment};
 use finality_grandpa::{
 	leader::{self, Error as PbftError, VoterSet},
 	BlockNumberOps,
 };
-use futures::{future, Future, Sink, Stream};
+use futures::{future, Future, Sink, SinkExt, Stream, TryStreamExt};
 use import::PbftBlockImport;
 use log::{debug, info};
 use parity_scale_codec::Decode;
@@ -30,8 +30,6 @@ use sp_runtime::{
 	generic::BlockId,
 	traits::{Block as BlockT, Header as HeaderT, NumberFor, Zero},
 };
-use until_imported::UntilGlobalMessageBlocksImported;
-
 use crate::environment::VoterSetState;
 
 pub(crate) mod communication;
@@ -41,6 +39,9 @@ pub(crate) mod authorities;
 pub(crate) mod aux_schema;
 pub(crate) mod environment;
 pub(crate) mod until_imported;
+
+use until_imported::UntilGlobalMessageBlocksImported;
+
 
 /// A global communication input stream for commits and catch up messages. Not
 /// exposed publicly, used internally to simplify types in the communication
@@ -221,9 +222,7 @@ fn global_communication<BE, Block: BlockT, C, N>(
 	keystore: Option<&SyncCryptoStorePtr>,
 	metrics: Option<until_imported::Metrics>,
 ) -> (
-	impl Stream<
-		Item = Result<GlobalCommunication, CommandOrError<Block::Hash, NumberFor<Block>>>,
-	>,
+	impl Stream<Item = Result<GlobalCommunication, CommandOrError<Block::Hash, NumberFor<Block>>>>,
 	impl Sink<GlobalCommunication, Error = CommandOrError<Block::Hash, NumberFor<Block>>>,
 )
 where
@@ -384,7 +383,7 @@ where
 		);
 
 		match &*self.env.voter_set_state.read() {
-			VoterSetState::Live { completed_rounds, .. } => {
+			VoterSetState::Live { completed_views, .. } => {
 				let last_finalized = (chain_info.finalized_hash, chain_info.finalized_number);
 
 				let global_comms = global_communication(
@@ -396,15 +395,15 @@ where
 					self.metrics.as_ref().map(|m| m.until_imported.clone()),
 				);
 
-				let last_completed_round = completed_rounds.last();
+				let last_completed_view = completed_views.last();
 
 				let voter = finality_grandpa::leader::voter::Voter::new(
 					self.env.clone(),
 					(*self.env.voters).clone(),
 					global_comms,
-					last_completed_round.number,
-					last_completed_round.votes.clone(),
-					last_completed_round.base,
+					last_completed_view.number,
+					last_completed_view.votes.clone(),
+					last_completed_view.base,
 					last_finalized,
 				);
 
@@ -556,12 +555,97 @@ impl Config {
 	}
 }
 
-/// Errors that can occur while voting in GRANDPA.
+pub type SignedMessage<Block> = leader::SignedMessage<
+	NumberFor<Block>,
+	<Block as BlockT>::Hash,
+	AuthoritySignature,
+	AuthorityId,
+>;
+
+/// Shared voter state for querying.
+pub struct SharedVoterState<Block: BlockT> {
+	inner: Arc<
+		RwLock<
+			Option<
+				Box<
+					dyn leader::voter::VoterState<<Block as BlockT>::Hash, AuthorityId>
+						+ Sync
+						+ Send,
+				>,
+			>,
+		>,
+	>,
+}
+
+/// A new authority set along with the canonical block it changed at.
+#[derive(Debug)]
+pub(crate) struct NewAuthoritySet<H, N> {
+	pub(crate) canon_number: N,
+	pub(crate) canon_hash: H,
+	pub(crate) set_id: SetId,
+	pub(crate) authorities: AuthorityList,
+}
+
+/// Commands issued to the voter.
+#[derive(Debug)]
+pub(crate) enum VoterCommand<H, N> {
+	/// Pause the voter for given reason.
+	Pause(String),
+	/// New authorities.
+	ChangeAuthorities(NewAuthoritySet<H, N>),
+}
+
+/// Signals either an early exit of a voter or an error.
+#[derive(Debug)]
+pub(crate) enum CommandOrError<H, N> {
+	/// An error occurred.
+	Error(Error),
+	/// A command to the voter.
+	VoterCommand(VoterCommand<H, N>),
+}
+
+impl<H, N> From<Error> for CommandOrError<H, N> {
+	fn from(e: Error) -> Self {
+		CommandOrError::Error(e)
+	}
+}
+
+impl<H, N> From<ClientError> for CommandOrError<H, N> {
+	fn from(e: ClientError) -> Self {
+		CommandOrError::Error(Error::Client(e))
+	}
+}
+
+impl<H, N> From<finality_grandpa::leader::Error> for CommandOrError<H, N> {
+	fn from(e: finality_grandpa::leader::Error) -> Self {
+		CommandOrError::Error(Error::from(e))
+	}
+}
+
+impl<H, N> From<VoterCommand<H, N>> for CommandOrError<H, N> {
+	fn from(e: VoterCommand<H, N>) -> Self {
+		CommandOrError::VoterCommand(e)
+	}
+}
+
+use std::fmt;
+impl<H: fmt::Debug, N: fmt::Debug> ::std::error::Error for CommandOrError<H, N> {}
+
+impl<H, N> fmt::Display for CommandOrError<H, N> {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		match *self {
+			CommandOrError::Error(ref e) => write!(f, "{}", e),
+			CommandOrError::VoterCommand(ref cmd) => write!(f, "{}", cmd),
+		}
+	}
+}
+
+/// Errors that can occur while voting in PBFT.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-	/// An error within grandpa.
-	#[error("grandpa error: {0}")]
-	Grandpa(PbftError),
+	/// An error within pbft.
+	#[error("pbft error: {0}")]
+	Pbft(PbftError),
 
 	/// A network error.
 	#[error("network error: {0}")]
@@ -594,7 +678,7 @@ pub enum Error {
 
 impl From<PbftError> for Error {
 	fn from(e: PbftError) -> Self {
-		Error::Grandpa(e)
+		Error::Pbft(e)
 	}
 }
 
@@ -602,92 +686,6 @@ impl From<ClientError> for Error {
 	fn from(e: ClientError) -> Self {
 		Error::Client(e)
 	}
-}
-
-pub type SignedMessage<Block> = leader::SignedMessage<
-	NumberFor<Block>,
-	<Block as BlockT>::Hash,
-	AuthoritySignature,
-	AuthorityId,
->;
-
-/// Shared voter state for querying.
-pub struct SharedVoterState<Block: BlockT> {
-	inner: Arc<
-		RwLock<
-			Option<
-				Box<
-					dyn leader::voter::VoterState<<Block as BlockT>::Hash, AuthorityId>
-						+ Sync
-						+ Send,
-				>,
-			>,
-		>,
-	>,
-}
-
-
-/// A new authority set along with the canonical block it changed at.
-#[derive(Debug)]
-pub(crate) struct NewAuthoritySet<H, N> {
-	pub(crate) canon_number: N,
-	pub(crate) canon_hash: H,
-	pub(crate) set_id: SetId,
-	pub(crate) authorities: AuthorityList,
-}
-
-/// Commands issued to the voter.
-#[derive(Debug)]
-pub(crate) enum VoterCommand<H, N> {
-	/// Pause the voter for given reason.
-	Pause(String),
-	/// New authorities.
-	ChangeAuthorities(NewAuthoritySet<H, N>),
-}
-
-/// Signals either an early exit of a voter or an error.
-#[derive(Debug)]
-pub(crate) enum CommandOrError<H, N> {
-	/// An error occurred.
-	Error(Error),
-	/// A command to the voter.
-	VoterCommand(VoterCommand<H, N>),
-}
-
-/// Errors that can occur while voting in PBFT.
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-	/// An error within pbft.
-	#[error("pbft error: {0}")]
-	Grandpa(PbftError),
-
-	/// A network error.
-	#[error("network error: {0}")]
-	Network(String),
-
-	/// A blockchain error.
-	#[error("blockchain error: {0}")]
-	Blockchain(String),
-
-	/// Could not complete a round on disk.
-	#[error("could not complete a round on disk: {0}")]
-	Client(ClientError),
-
-	/// Could not sign outgoing message
-	#[error("could not sign outgoing message: {0}")]
-	Signing(String),
-
-	/// An invariant has been violated (e.g. not finalizing pending change blocks in-order)
-	#[error("safety invariant has been violated: {0}")]
-	Safety(String),
-
-	/// A timer failed to fire.
-	#[error("a timer failed to fire: {0}")]
-	Timer(std::io::Error),
-
-	/// A runtime api request failed.
-	#[error("runtime API request failed: {0}")]
-	RuntimeApi(sp_api::ApiError),
 }
 
 /// Something which can determine if a block is known.

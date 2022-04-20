@@ -343,29 +343,31 @@ impl<Block: BlockT> BlockUntilImported<Block> for SignedMessage<Block> {
 		msg: Self::Blocked,
 		status_check: &BlockStatus,
 	) -> Result<DiscardWaitOrReady<Block, Self, Self::Blocked>, Error> {
-		let (&target_hash, target_number) = msg.target();
-
-		if let Some(number) = status_check.block_number(target_hash)? {
-			if number != target_number {
-				warn_authority_wrong_target(target_hash, msg.id);
-				return Ok(DiscardWaitOrReady::Discard)
-			} else {
-				return Ok(DiscardWaitOrReady::Ready(msg))
-			}
-		}
-
-		Ok(DiscardWaitOrReady::Wait(vec![(target_hash, target_number, msg)]))
+        return Ok(DiscardWaitOrReady::Ready(msg))
+		// let (&target_hash, target_number) = msg.target();
+		//
+		// if let Some(number) = status_check.block_number(target_hash)? {
+		// 	if number != target_number {
+		// 		warn_authority_wrong_target(target_hash, msg.id);
+		// 		return Ok(DiscardWaitOrReady::Discard)
+		// 	} else {
+		// 		return Ok(DiscardWaitOrReady::Ready(msg))
+		// 	}
+		// }
+		//
+		// Ok(DiscardWaitOrReady::Wait(vec![(target_hash, target_number, msg)]))
 	}
 
 	fn wait_completed(self, canon_number: NumberFor<Block>) -> Option<Self::Blocked> {
-		let (&target_hash, target_number) = self.target();
-		if canon_number != target_number {
-			warn_authority_wrong_target(target_hash, self.id);
-
-			None
-		} else {
-			Some(self)
-		}
+        Some(self)
+		// let (&target_hash, target_number) = self.target();
+		// if canon_number != target_number {
+		// 	warn_authority_wrong_target(target_hash, self.id);
+		//
+		// 	None
+		// } else {
+		// 	Some(self)
+		// }
 	}
 }
 
@@ -514,7 +516,7 @@ mod tests {
 	use sc_client_api::BlockImportNotification;
 	use sc_utils::mpsc::{tracing_unbounded, TracingUnboundedSender};
 	use sp_consensus::BlockOrigin;
-	use sp_core::crypto::UncheckedFrom;
+	// use sp_core::crypto::UncheckedFrom;
 	use substrate_test_runtime_client::runtime::{Block, Hash, Header};
 
 	#[derive(Clone)]
@@ -596,9 +598,9 @@ mod tests {
 	}
 
 	fn message_all_dependencies_satisfied<F>(
-		msg: CommunicationIn<Block>,
+		msg: GlobalCommunication,
 		enact_dependencies: F,
-	) -> CommunicationIn<Block>
+	) -> GlobalCommunication
 	where
 		F: FnOnce(&TestChainState),
 	{
@@ -627,9 +629,9 @@ mod tests {
 	}
 
 	fn blocking_message_on_dependencies<F>(
-		msg: CommunicationIn<Block>,
+		msg: GlobalCommunication,
 		enact_dependencies: F,
-	) -> CommunicationIn<Block>
+	) -> GlobalCommunication
 	where
 		F: FnOnce(&TestChainState),
 	{
@@ -894,8 +896,8 @@ mod tests {
 		// futures::executor::block_on(test);
 	}
 
-	fn test_catch_up() -> Arc<Mutex<Option<CommunicationIn<Block>>>> {
-		let header = make_header(5);
+	// fn test_catch_up() -> Arc<Mutex<Option<GlobalCommunication>>> {
+		// let header = make_header(5);
 
 		// let unknown_catch_up = finality_pbft::CatchUp {
 		// 	round_number: 1,
@@ -909,11 +911,11 @@ mod tests {
 		// 	voter::CommunicationIn::CatchUp(unknown_catch_up.clone(), voter::Callback::Blank);
 		//
 		// Arc::new(Mutex::new(Some(catch_up)))
-	}
+	// }
 
 	#[test]
 	fn block_global_message_wait_completed_return_when_all_awaited() {
-		let msg_inner = test_catch_up();
+		// let msg_inner = test_catch_up();
 
 		// let waiting_block_1 =
 		// 	BlockGlobalMessage::<Block> { inner: msg_inner.clone(), target_number: 1 };
@@ -930,7 +932,7 @@ mod tests {
 
 	#[test]
 	fn block_global_message_wait_completed_return_none_on_block_number_missmatch() {
-		let msg_inner = test_catch_up();
+		// let msg_inner = test_catch_up();
 
 		// let waiting_block_1 =
 		// 	BlockGlobalMessage::<Block> { inner: msg_inner.clone(), target_number: 1 };
