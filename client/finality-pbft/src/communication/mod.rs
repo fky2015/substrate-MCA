@@ -50,6 +50,41 @@ pub mod pbft_protocol_name {
 	}
 }
 
+// cost scalars for reporting peers.
+mod cost {
+	use sc_network::ReputationChange as Rep;
+	pub(super) const PAST_REJECTION: Rep = Rep::new(-50, "Grandpa: Past message");
+	pub(super) const BAD_SIGNATURE: Rep = Rep::new(-100, "Grandpa: Bad signature");
+	pub(super) const MALFORMED_CATCH_UP: Rep = Rep::new(-1000, "Grandpa: Malformed cath-up");
+	pub(super) const MALFORMED_COMMIT: Rep = Rep::new(-1000, "Grandpa: Malformed commit");
+	pub(super) const FUTURE_MESSAGE: Rep = Rep::new(-500, "Grandpa: Future message");
+	pub(super) const UNKNOWN_VOTER: Rep = Rep::new(-150, "Grandpa: Unknown voter");
+
+	pub(super) const INVALID_VIEW_CHANGE: Rep = Rep::new(-500, "Grandpa: Invalid view change");
+	pub(super) const PER_UNDECODABLE_BYTE: i32 = -5;
+	pub(super) const PER_SIGNATURE_CHECKED: i32 = -25;
+	pub(super) const PER_BLOCK_LOADED: i32 = -10;
+	pub(super) const INVALID_CATCH_UP: Rep = Rep::new(-5000, "Grandpa: Invalid catch-up");
+	pub(super) const INVALID_COMMIT: Rep = Rep::new(-5000, "Grandpa: Invalid commit");
+	pub(super) const OUT_OF_SCOPE_MESSAGE: Rep = Rep::new(-500, "Grandpa: Out-of-scope message");
+	pub(super) const CATCH_UP_REQUEST_TIMEOUT: Rep =
+		Rep::new(-200, "Grandpa: Catch-up request timeout");
+
+	// cost of answering a catch up request
+	pub(super) const CATCH_UP_REPLY: Rep = Rep::new(-200, "Grandpa: Catch-up reply");
+	pub(super) const HONEST_OUT_OF_SCOPE_CATCH_UP: Rep =
+		Rep::new(-200, "Grandpa: Out-of-scope catch-up");
+}
+
+// benefit scalars for reporting peers.
+mod benefit {
+	use sc_network::ReputationChange as Rep;
+	pub(super) const NEIGHBOR_MESSAGE: Rep = Rep::new(100, "Grandpa: Neighbor message");
+	pub(super) const ROUND_MESSAGE: Rep = Rep::new(100, "Grandpa: Round message");
+	pub(super) const BASIC_VALIDATED_CATCH_UP: Rep = Rep::new(200, "Grandpa: Catch-up message");
+	pub(super) const BASIC_VALIDATED_COMMIT: Rep = Rep::new(100, "Grandpa: Commit");
+	pub(super) const PER_EQUIVOCATION: i32 = 10;
+}
 /// A type that ties together our local authority id and a keystore where it is
 /// available for signing.
 pub struct LocalIdKeystore((AuthorityId, SyncCryptoStorePtr));
@@ -144,12 +179,10 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 		// Get Protocol name.
 		let protocal = config.protocol_name.clone();
 		// Create GossipValidator.
-		let (validator, report_stream) = Arc::new(GossipValidator::new(
-			config,
-			set_state.clone(),
-			prometheus_registry,
-			telemetry.clone(),
-		));
+		let (validator, report_stream) =
+			GossipValidator::new(config, set_state.clone(), prometheus_registry, telemetry.clone());
+
+		let validator = Arc::new(Validator);
 
 		// Create GossipEngine.
 		let gossip_engine = Arc::new(Mutex::new(GossipEngine::new(
@@ -603,7 +636,7 @@ impl<Block: BlockT> Sink<(ViewNumber, GlobalMessage)> for CommitsOut<Block> {
 			self.telemetry;
 			CONSENSUS_DEBUG;
 			"afg.global_message";
-            "msg" => ?format!("{}", message),
+			"msg" => ?format!("{}", message),
 		);
 
 		let message = input.1;

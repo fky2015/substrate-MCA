@@ -1,9 +1,10 @@
 use std::{marker::PhantomData, pin::Pin, sync::Arc, time::Duration};
 
+use crate::environment::VoterSetState;
 use authorities::SharedAuthoritySet;
 use aux_schema::PersistentData;
 use communication::{Network as NetworkT, NetworkBridge};
-use environment::{Environment};
+use environment::Environment;
 use finality_grandpa::{
 	leader::{self, Error as PbftError, VoterSet},
 	BlockNumberOps,
@@ -30,7 +31,6 @@ use sp_runtime::{
 	generic::BlockId,
 	traits::{Block as BlockT, Header as HeaderT, NumberFor, Zero},
 };
-use crate::environment::VoterSetState;
 
 pub(crate) mod communication;
 pub(crate) mod import;
@@ -42,13 +42,100 @@ pub(crate) mod until_imported;
 
 use until_imported::UntilGlobalMessageBlocksImported;
 
+/// A PBFT message for a substrate chain.
+pub type Message<Block> = leader::Message<NumberFor<Block>, <Block as BlockT>::Hash>;
+
+/// A signed message
+pub type SignedMessage<Block: BlockT> =
+	leader::SignedMessage<NumberFor<Block>, Block::Hash, AuthoritySignature, AuthorityId>;
+
+/// A preprepare message for this chain's block type.
+pub type PrePrepare = leader::PrePrepare;
+/// A prepare message for this chain's block type.
+pub type Prepare<Block: BlockT> = leader::Prepare<NumberFor<Block>, Block::Hash>;
+/// A commit message for this chain's block type.
+pub type Commit<Block> = leader::Commit<NumberFor<Block>>;
+
+/// A catch up message for this chain's block type.
+pub type CatchUp<Block> =
+	leader::CatchUp<NumberFor<Block>, <Block as BlockT>::Hash, AuthoritySignature, AuthorityId>;
+
+/// A finalized commit message for this chain's block type.
+pub type FinalizedCommit = leader::FinalizedCommit;
+
+/// a compact commit message for this chain's block type.
+pub type CompactCommit<Block> = leader::CompactCommit<
+	<Block as BlockT>::Hash,
+	NumberFor<Block>,
+	AuthoritySignature,
+	AuthorityId,
+>;
 
 /// A global communication input stream for commits and catch up messages. Not
 /// exposed publicly, used internally to simplify types in the communication
 /// layer.
-type GlobalCommunication = leader::GlobalMessage<AuthorityId>;
+type GlobalCommunicationIn<Block> = leader::voter::GlobalMessageIn<
+	<Block as BlockT>::Hash,
+	NumberFor<Block>,
+	AuthoritySignature,
+	AuthorityId,
+>;
 
-pub type GlobalMessage = leader::GlobalMessage<AuthorityId>;
+/// Global communication input stream for commits and catch up messages, with
+/// the hash type not being derived from the block, useful for forcing the hash
+/// to some type (e.g. `H256`) when the compiler can't do the inference.
+type GlobalCommunicationInH<Block, H> =
+	leader::voter::GlobalMessageIn<H, NumberFor<Block>, AuthoritySignature, AuthorityId>;
+
+/// Global communication sink for commits with the hash type not being derived
+/// from the block, useful for forcing the hash to some type (e.g. `H256`) when
+/// the compiler can't do the inference.
+type GlobalCommunicationOut<Block> = leader::voter::GlobalMessageOut<
+	<Block as BlockT>::Hash,
+	NumberFor<Block>,
+	AuthoritySignature,
+	AuthorityId,
+>;
+type GlobalCommunicationOutH<Block, H> =
+	leader::voter::GlobalMessageOut<H, NumberFor<Block>, AuthoritySignature, AuthorityId>;
+
+/// Shared voter state for querying.
+#[derive(Clone)]
+pub struct SharedVoterState<Block: BlockT> {
+	inner: Arc<
+		RwLock<
+			Option<
+				Box<
+					dyn leader::voter::VoterState<<Block as BlockT>::Hash, AuthorityId>
+						+ Sync
+						+ Send,
+				>,
+			>,
+		>,
+	>,
+}
+
+impl<Block: BlockT> SharedVoterState<Block> {
+	/// Create a new empty `SharedVoterState` instance.
+	pub fn empty() -> Self {
+		Self { inner: Arc::new(RwLock::new(None)) }
+	}
+
+	fn reset(
+		&self,
+		voter_state: Box<dyn leader::voter::VoterState<Block::Hash, AuthorityId> + Sync + Send>,
+	) -> Option<()> {
+		let mut shared_voter_state = self.inner.try_write_for(Duration::from_secs(1))?;
+
+		*shared_voter_state = Some(voter_state);
+		Some(())
+	}
+
+	// TODO: FKY: Get the inner `VoterState` instance.
+	// pub fn voter_state(&self) -> Option<voter::report::VoterState<AuthorityId>> {
+	// 	self.inner.read().as_ref().map(|vs| vs.get())
+	// }
+}
 
 /// Link between the block importer and the background voter.
 pub struct LinkHalf<Block: BlockT, C, SC> {
@@ -222,8 +309,13 @@ fn global_communication<BE, Block: BlockT, C, N>(
 	keystore: Option<&SyncCryptoStorePtr>,
 	metrics: Option<until_imported::Metrics>,
 ) -> (
-	impl Stream<Item = Result<GlobalCommunication, CommandOrError<Block::Hash, NumberFor<Block>>>>,
-	impl Sink<GlobalCommunication, Error = CommandOrError<Block::Hash, NumberFor<Block>>>,
+	impl Stream<
+		Item = Result<GlobalCommunicationIn<Block>, CommandOrError<Block::Hash, NumberFor<Block>>>,
+	>,
+	impl Sink<
+		GlobalCommunicationOut<Block>,
+		Error = CommandOrError<Block::Hash, NumberFor<Block>>,
+	>,
 )
 where
 	BE: Backend<Block> + 'static,
@@ -553,28 +645,6 @@ impl Config {
 	fn name(&self) -> &str {
 		self.name.as_deref().unwrap_or("<unknown>")
 	}
-}
-
-pub type SignedMessage<Block> = leader::SignedMessage<
-	NumberFor<Block>,
-	<Block as BlockT>::Hash,
-	AuthoritySignature,
-	AuthorityId,
->;
-
-/// Shared voter state for querying.
-pub struct SharedVoterState<Block: BlockT> {
-	inner: Arc<
-		RwLock<
-			Option<
-				Box<
-					dyn leader::voter::VoterState<<Block as BlockT>::Hash, AuthorityId>
-						+ Sync
-						+ Send,
-				>,
-			>,
-		>,
-	>,
 }
 
 /// A new authority set along with the canonical block it changed at.
