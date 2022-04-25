@@ -7,11 +7,12 @@ use std::{
 };
 
 use crate::{
-	authorities::SharedAuthoritySet, communication::Network as NetworkT, ClientForPbft,
-	CommandOrError, Config, SignedMessage,
+	authorities::{AuthoritySet, SharedAuthoritySet},
+	communication::Network as NetworkT,
+	ClientForPbft, CommandOrError, Config, Error, SignedMessage,
 };
 use finality_grandpa::{
-	leader::{self, voter::report::ViewState, VoterSet},
+	leader::{self, Error as PbftError, State as ViewState, VoterSet},
 	BlockNumberOps,
 };
 use futures::{Future, Sink, Stream};
@@ -62,8 +63,8 @@ where
 					// FIXME:
 					Item = Result<
 						::finality_grandpa::leader::SignedMessage<
-							Block::Hash,
 							NumberFor<Block>,
+							Block::Hash,
 							Self::Signature,
 							Self::Id,
 						>,
@@ -77,7 +78,7 @@ where
 		Box<
 			dyn Sink<
 					// FIXME:
-					::finality_grandpa::leader::Message<Block::Hash, NumberFor<Block>>,
+					::finality_grandpa::leader::Message<NumberFor<Block>, Block::Hash>,
 					Error = Self::Error,
 				> + Send,
 		>,
@@ -151,6 +152,77 @@ pub struct CompletedViews<Block: BlockT> {
 	voters: Vec<AuthorityId>,
 }
 
+const NUM_LAST_COMPLETED_VIEWS: usize = 2;
+
+impl<Block: BlockT> Encode for CompletedViews<Block> {
+	fn encode(&self) -> Vec<u8> {
+		let v = Vec::from_iter(&self.views);
+		(&v, &self.set_id, &self.voters).encode()
+	}
+}
+
+impl<Block: BlockT> parity_scale_codec::EncodeLike for CompletedViews<Block> {}
+
+impl<Block: BlockT> Decode for CompletedViews<Block> {
+	fn decode<I: parity_scale_codec::Input>(
+		value: &mut I,
+	) -> Result<Self, parity_scale_codec::Error> {
+		<(Vec<CompletedView<Block>>, SetId, Vec<AuthorityId>)>::decode(value)
+			.map(|(views, set_id, voters)| CompletedViews { views, set_id, voters })
+	}
+}
+
+impl<Block: BlockT> CompletedViews<Block> {
+	/// Create a new completed rounds tracker with NUM_LAST_COMPLETED_ROUNDS capacity.
+	pub(crate) fn new(
+		genesis: CompletedView<Block>,
+		set_id: SetId,
+		voters: &AuthoritySet<Block::Hash, NumberFor<Block>>,
+	) -> CompletedViews<Block> {
+		let mut views = Vec::with_capacity(NUM_LAST_COMPLETED_VIEWS);
+		views.push(genesis);
+
+		let voters = voters.current_authorities.iter().map(|a| a.clone()).collect();
+		CompletedViews { views, set_id, voters }
+	}
+
+	/// Get the set-id and voter set of the completed rounds.
+	pub fn set_info(&self) -> (SetId, &[AuthorityId]) {
+		(self.set_id, &self.voters[..])
+	}
+
+	/// Iterate over all completed rounds.
+	pub fn iter(&self) -> impl Iterator<Item = &CompletedView<Block>> {
+		self.views.iter().rev()
+	}
+
+	/// Returns the last (latest) completed view.
+	pub fn last(&self) -> &CompletedView<Block> {
+		self.views
+			.first()
+			.expect("inner is never empty; always contains at least genesis; qed")
+	}
+
+	/// Push a new completed view, oldest view is evicted if number of views
+	/// is higher than `NUM_LAST_COMPLETED_ROUNDS`.
+	pub fn push(&mut self, completed_view: CompletedView<Block>) {
+		use std::cmp::Reverse;
+
+		match self
+			.views
+			.binary_search_by_key(&Reverse(completed_view.number), |completed_view| {
+				Reverse(completed_view.number)
+			}) {
+			Ok(idx) => self.views[idx] = completed_view,
+			Err(idx) => self.views.insert(idx, completed_view),
+		};
+
+		if self.views.len() > NUM_LAST_COMPLETED_VIEWS {
+			self.views.pop();
+		}
+	}
+}
+
 /// The state of the current voter set, whether it is currently active or not
 /// and information related to the previously completed views. Current view
 /// voting status is used when restarting the voter, i.e. it will re-use the
@@ -172,6 +244,68 @@ pub enum VoterSetState<Block: BlockT> {
 	},
 }
 
+impl<Block: BlockT> VoterSetState<Block> {
+	/// Create a new live VoterSetState with view 0 as a completed view using
+	/// the given genesis state and the given authorities. Round 1 is added as a
+	/// current view (with state `HasVoted::No`).
+	pub(crate) fn live(
+		set_id: SetId,
+		authority_set: &AuthoritySet<Block::Hash, NumberFor<Block>>,
+		genesis_state: (Block::Hash, NumberFor<Block>),
+	) -> VoterSetState<Block> {
+		let state = ViewState::genesis((genesis_state.0, genesis_state.1));
+		let completed_views = CompletedViews::new(
+			CompletedView {
+				number: 0,
+				state,
+				base: (genesis_state.0, genesis_state.1),
+				votes: Vec::new(),
+			},
+			set_id,
+			authority_set,
+		);
+
+		let mut current_views = CurrentViews::new();
+		current_views.insert(1, HasVoted::No);
+
+		VoterSetState::Live { completed_views, current_views }
+	}
+
+	/// Returns the last completed views.
+	pub(crate) fn completed_views(&self) -> CompletedViews<Block> {
+		match self {
+			VoterSetState::Live { completed_views, .. } => completed_views.clone(),
+			VoterSetState::Paused { completed_views } => completed_views.clone(),
+		}
+	}
+
+	/// Returns the last completed view.
+	pub(crate) fn last_completed_view(&self) -> CompletedView<Block> {
+		match self {
+			VoterSetState::Live { completed_views, .. } => completed_views.last().clone(),
+			VoterSetState::Paused { completed_views } => completed_views.last().clone(),
+		}
+	}
+
+	/// Returns the voter set state validating that it includes the given view
+	/// in current views and that the voter isn't paused.
+	pub fn with_current_view(
+		&self,
+		view: ViewNumber,
+	) -> Result<(&CompletedViews<Block>, &CurrentViews<Block>), Error> {
+		if let VoterSetState::Live { completed_views, current_views } = self {
+			if current_views.contains_key(&view) {
+				Ok((completed_views, current_views))
+			} else {
+				let msg = "Voter acting on a live view we are not tracking.";
+				Err(Error::Safety(msg.to_string()))
+			}
+		} else {
+			let msg = "Voter acting while in paused state.";
+			Err(Error::Safety(msg.to_string()))
+		}
+	}
+}
 /// A voter set state meant to be shared safely across multiple owners.
 #[derive(Clone)]
 pub struct SharedVoterSetState<Block: BlockT> {

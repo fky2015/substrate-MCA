@@ -17,7 +17,7 @@ use sp_finality_pbft::{AuthorityId, SetId as SetIdNumber, ViewNumber};
 use sp_keystore::SyncCryptoStorePtr;
 use sp_runtime::traits::{Block as BlockT, Hash as HashT, Header as HeaderT, NumberFor};
 
-use crate::{environment::HasVoted, Error, GlobalCommunication, GlobalMessage, SignedMessage};
+use crate::{environment::HasVoted, Error, SignedMessage};
 
 use self::gossip::{GossipMessage, GossipValidator, PeerReport};
 

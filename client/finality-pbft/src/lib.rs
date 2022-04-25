@@ -312,10 +312,7 @@ fn global_communication<BE, Block: BlockT, C, N>(
 	impl Stream<
 		Item = Result<GlobalCommunicationIn<Block>, CommandOrError<Block::Hash, NumberFor<Block>>>,
 	>,
-	impl Sink<
-		GlobalCommunicationOut<Block>,
-		Error = CommandOrError<Block::Hash, NumberFor<Block>>,
-	>,
+	impl Sink<GlobalCommunicationOut<Block>, Error = CommandOrError<Block::Hash, NumberFor<Block>>>,
 )
 where
 	BE: Backend<Block> + 'static,
@@ -347,14 +344,14 @@ where
 
 struct Metrics {
 	environment: environment::Metrics,
-	// until_imported: until_imported::Metrics,
+	until_imported: until_imported::Metrics,
 }
 
 impl Metrics {
 	fn register(registry: &Registry) -> Result<Self, PrometheusError> {
 		Ok(Metrics {
 			environment: environment::Metrics::register(registry)?,
-			// until_imported: until_imported::Metrics::register(registry)?,
+			until_imported: until_imported::Metrics::register(registry)?,
 		})
 	}
 }
@@ -457,7 +454,7 @@ where
 
 		let chain_info = self.env.client.info();
 
-		let authorities = self.env.voters.iter().map(|(id, _)| id.to_string()).collect::<Vec<_>>();
+		let authorities = self.env.voters.iter().map(|id| id.to_string()).collect::<Vec<_>>();
 
 		let authorities = serde_json::to_string(&authorities).expect(
 			"authorities is always at least an empty vector; elements are always of type string; qed.",
@@ -475,40 +472,6 @@ where
 		);
 
 		match &*self.env.voter_set_state.read() {
-			VoterSetState::Live { completed_views, .. } => {
-				let last_finalized = (chain_info.finalized_hash, chain_info.finalized_number);
-
-				let global_comms = global_communication(
-					self.env.set_id,
-					&self.env.voters,
-					self.env.client.clone(),
-					&self.env.network,
-					self.env.config.keystore.as_ref(),
-					self.metrics.as_ref().map(|m| m.until_imported.clone()),
-				);
-
-				let last_completed_view = completed_views.last();
-
-				let voter = finality_grandpa::leader::voter::Voter::new(
-					self.env.clone(),
-					(*self.env.voters).clone(),
-					global_comms,
-					last_completed_view.number,
-					last_completed_view.votes.clone(),
-					last_completed_view.base,
-					last_finalized,
-				);
-
-				// Repoint shared_voter_state so that the RPC endpoint can query the state
-				if self.shared_voter_state.reset(voter.voter_state()).is_none() {
-					info!(target: "afg",
-						"Timed out trying to update shared GRANDPA voter state. \
-						RPC endpoints may return stale data."
-					);
-				}
-
-				self.voter = Box::pin(voter);
-			},
 			VoterSetState::Paused { .. } => self.voter = Box::pin(future::pending()),
 		};
 	}
@@ -520,7 +483,7 @@ where
 		match command {
 			VoterCommand::ChangeAuthorities(new) => {
 				let voters: Vec<String> =
-					new.authorities.iter().map(move |(a, _)| format!("{}", a)).collect();
+					new.authorities.iter().map(move |a| format!("{}", a)).collect();
 				telemetry!(
 					self.telemetry;
 					CONSENSUS_INFO;
