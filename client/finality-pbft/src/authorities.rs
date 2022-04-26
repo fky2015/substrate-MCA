@@ -2,9 +2,11 @@ use std::{cmp::Ord, fmt::Debug, ops::Add};
 
 use finality_grandpa::leader::VoterSet;
 use fork_tree::ForkTree;
+use log::debug;
 use parity_scale_codec::{Decode, Encode};
 use parking_lot::MappedMutexGuard;
 use sc_consensus::shared_data::{SharedData, SharedDataLocked};
+use sc_telemetry::{telemetry, TelemetryHandle, CONSENSUS_INFO};
 use sp_finality_pbft::{AuthorityId, AuthorityList};
 
 /// Error type returned on operations on the `AuthoritySet`.
@@ -103,6 +105,16 @@ where
 /// have a justification unless they were triggered by a forced change.
 #[derive(Debug, Encode, Decode, Clone, PartialEq)]
 pub struct AuthoritySetChanges<N>(Vec<(u64, N)>);
+
+/// Status of the set after changes were applied.
+#[derive(Debug)]
+pub(crate) struct Status<H, N> {
+	/// Whether internal changes were made.
+	pub(crate) changed: bool,
+	/// `Some` when underlying authority set has changed, containing the
+	/// block where that set changed.
+	pub(crate) new_set_block: Option<(H, N)>,
+}
 
 /// A set of authorities.
 #[derive(Debug, Clone, Encode, Decode, PartialEq)]

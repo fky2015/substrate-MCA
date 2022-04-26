@@ -9,7 +9,7 @@ use std::{
 use crate::{
 	authorities::{AuthoritySet, SharedAuthoritySet},
 	communication::Network as NetworkT,
-	ClientForPbft, CommandOrError, Config, Error, SignedMessage,
+	ClientForPbft, CommandOrError, Commit, Config, Error, PrePrepare, Prepare, SignedMessage,
 };
 use finality_grandpa::{
 	leader::{self, Error as PbftError, State as ViewState, VoterSet},
@@ -101,7 +101,7 @@ where
 		todo!()
 	}
 
-	fn preprepare(&self, view: u64) -> Option<(Self::Hash, Self::Number)> {
+	fn preprepare(&self, view: u64) -> (Self::Hash, Self::Number) {
 		todo!()
 	}
 
@@ -121,7 +121,62 @@ pub enum HasVoted<Block: BlockT> {
 	/// Has not voted already in this view.
 	No,
 	/// Has voted in this view.
-	Yes(AuthorityId, leader::Message<NumberFor<Block>, <Block as BlockT>::Hash>),
+	Yes(AuthorityId, Vote<Block>),
+}
+
+/// The votes cast by this voter already during a prior run of the program.
+#[derive(Debug, Clone, Decode, Encode, PartialEq)]
+pub enum Vote<Block: BlockT> {
+	/// Has cast a proposal.
+	PrePrepare(PrePrepare<Block>),
+	/// Has cast a prevote.
+	Prepare(Option<PrePrepare<Block>>, Prepare<Block>),
+	/// Has cast a precommit (implies prevote.)
+	Commit(Option<PrePrepare<Block>>, Prepare<Block>, Commit<Block>),
+}
+
+impl<Block: BlockT> HasVoted<Block> {
+	/// Returns the proposal we should vote with (if any.)
+	pub fn pre_prepare(&self) -> Option<&PrePrepare<Block>> {
+		match self {
+			HasVoted::Yes(_, Vote::PrePrepare(propose)) => Some(propose),
+			HasVoted::Yes(_, Vote::Prepare(propose, _))
+			| HasVoted::Yes(_, Vote::Commit(propose, _, _)) => propose.as_ref(),
+			_ => None,
+		}
+	}
+
+	/// Returns the prevote we should vote with (if any.)
+	pub fn prepare(&self) -> Option<&Prepare<Block>> {
+		match self {
+			HasVoted::Yes(_, Vote::Prepare(_, prepare))
+			| HasVoted::Yes(_, Vote::Commit(_, prepare, _)) => Some(prepare),
+			_ => None,
+		}
+	}
+
+	/// Returns the precommit we should vote with (if any.)
+	pub fn commit(&self) -> Option<&Commit<Block>> {
+		match self {
+			HasVoted::Yes(_, Vote::Commit(_, _, commit)) => Some(commit),
+			_ => None,
+		}
+	}
+
+	/// FIXME: Returns true if the voter can still propose, false otherwise.
+	pub fn can_pre_prepare(&self) -> bool {
+		self.pre_prepare().is_none()
+	}
+
+	/// Returns true if the voter can still prevote, false otherwise.
+	pub fn can_prepare(&self) -> bool {
+		self.prepare().is_none()
+	}
+
+	/// Returns true if the voter can still precommit, false otherwise.
+	pub fn can_commit(&self) -> bool {
+		self.commit().is_none()
+	}
 }
 
 /// A map with voter status information for currently live views,

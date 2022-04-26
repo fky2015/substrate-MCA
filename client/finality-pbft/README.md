@@ -1,3 +1,5 @@
 # PBFT
 
-## Some changes compared to  
+## Some changes compared to GRANDPA
+
+- - Reputation

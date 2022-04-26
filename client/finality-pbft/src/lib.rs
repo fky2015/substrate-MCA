@@ -32,6 +32,23 @@ use sp_runtime::{
 	traits::{Block as BlockT, Header as HeaderT, NumberFor, Zero},
 };
 
+// utility logging macro that takes as first argument a conditional to
+// decide whether to log under debug or info level (useful to restrict
+// logging under initial sync).
+macro_rules! afg_log {
+	($condition:expr, $($msg: expr),+ $(,)?) => {
+		{
+			let log_level = if $condition {
+				log::Level::Debug
+			} else {
+				log::Level::Info
+			};
+
+			log::log!(target: "afg", log_level, $($msg),+);
+		}
+	};
+}
+
 pub(crate) mod communication;
 pub(crate) mod import;
 
@@ -50,18 +67,23 @@ pub type SignedMessage<Block: BlockT> =
 	leader::SignedMessage<NumberFor<Block>, Block::Hash, AuthoritySignature, AuthorityId>;
 
 /// A preprepare message for this chain's block type.
-pub type PrePrepare = leader::PrePrepare;
+pub type PrePrepare<Block: BlockT> = leader::PrePrepare<NumberFor<Block>, Block::Hash>;
 /// A prepare message for this chain's block type.
 pub type Prepare<Block: BlockT> = leader::Prepare<NumberFor<Block>, Block::Hash>;
 /// A commit message for this chain's block type.
-pub type Commit<Block> = leader::Commit<NumberFor<Block>>;
+pub type Commit<Block: BlockT> = leader::Commit<NumberFor<Block>, Block::Hash>;
 
 /// A catch up message for this chain's block type.
 pub type CatchUp<Block> =
 	leader::CatchUp<NumberFor<Block>, <Block as BlockT>::Hash, AuthoritySignature, AuthorityId>;
 
 /// A finalized commit message for this chain's block type.
-pub type FinalizedCommit = leader::FinalizedCommit;
+pub type FinalizedCommit<Block> = leader::FinalizedCommit<
+	NumberFor<Block>,
+	<Block as BlockT>::Hash,
+	AuthoritySignature,
+	AuthorityId,
+>;
 
 /// a compact commit message for this chain's block type.
 pub type CompactCommit<Block> = leader::CompactCommit<

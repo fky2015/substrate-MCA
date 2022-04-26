@@ -133,6 +133,37 @@ where
 	valid
 }
 
+/// Localizes the message to the given set and round and signs the payload.
+#[cfg(feature = "std")]
+pub fn sign_message<H, N>(
+	keystore: SyncCryptoStorePtr,
+	message: leader::Message<H, N>,
+	public: AuthorityId,
+	view: ViewNumber,
+	set_id: SetId,
+) -> Option<leader::SignedMessage<H, N, AuthoritySignature, AuthorityId>>
+where
+	H: Encode,
+	N: Encode,
+{
+	use sp_application_crypto::AppKey;
+	use sp_core::crypto::Public;
+
+	let encoded = localized_payload(view, set_id, &message);
+	let signature = SyncCryptoStore::sign_with(
+		&*keystore,
+		AuthorityId::ID,
+		&public.to_public_crypto_pair(),
+		&encoded[..],
+	)
+	.ok()
+	.flatten()?
+	.try_into()
+	.ok()?;
+
+	Some(leader::SignedMessage { message, signature, id: public })
+}
+
 sp_api::decl_runtime_apis! {
 	/// APIs for integrating the PBFT finality gadget into runtimes.
 	/// This should be implemented on the runtime side.
