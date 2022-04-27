@@ -1,7 +1,6 @@
 // TODO: Or say, currently lacked features:
 //  - authority change & hard fork logic
 use log::debug;
-use sp_runtime::traits::Zero;
 use parity_scale_codec::Decode;
 use sc_client_api::{backend::Backend, utils::is_descendent_of};
 use sc_consensus::{
@@ -11,6 +10,7 @@ use sc_consensus::{
 use sp_api::Core;
 use sp_api::RuntimeApiInfo;
 use sp_core::twox_128;
+use sp_runtime::traits::Zero;
 
 use sc_telemetry::TelemetryHandle;
 use sc_utils::mpsc::TracingUnboundedSender;
@@ -667,7 +667,7 @@ where
 }
 
 impl<Backend, Block: BlockT, Client, SC> PbftBlockImport<Backend, Block, Client, SC> {
-	pub fn new(
+	pub(crate) fn new(
 		inner: Arc<Client>,
 		select_chain: SC,
 		authority_set: SharedAuthoritySet<Block::Hash, NumberFor<Block>>,

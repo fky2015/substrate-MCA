@@ -400,8 +400,14 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 		);
 
 		let outgoing = outgoing.with(|out| {
-			let voter::GlobalMessageOut::Commit(view, commit) = out;
-			future::ok((view, commit))
+			// FIXME:: send GlobalMessageOut
+			match out {
+				leader::voter::GlobalMessageOut::Commit(view, commit) => future::ok((view, commit)),
+				_ => future::err(Error::Network("global outgoing have wring message type [NEED IMPLEMENT]".to_string())),
+			}
+
+			// let voter::GlobalMessageOut::Commit(view, commit) = out;
+			// future::ok((view, commit))
 		});
 
 		(incoming, outgoing)
@@ -918,6 +924,7 @@ fn check_catch_up<Block: BlockT>(
 
 	Ok(())
 }
+
 /// An output sink for commit messages.
 struct CommitsOut<Block: BlockT> {
 	network: Arc<Mutex<GossipEngine<Block>>>,
@@ -949,6 +956,8 @@ impl<Block: BlockT> CommitsOut<Block> {
 	}
 }
 
+// FIXME: use GlobalMessageOut instead of FinalizedCommit
+// Because ChangeView and Empty also should be delivered without delayed.
 impl<Block: BlockT> Sink<(ViewNumber, FinalizedCommit<Block>)> for CommitsOut<Block> {
 	type Error = Error;
 

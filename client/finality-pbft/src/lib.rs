@@ -7,7 +7,7 @@ use aux_schema::PersistentData;
 use communication::{Network as NetworkT, NetworkBridge};
 use environment::Environment;
 use finality_grandpa::{
-	leader::{self, Error as PbftError, VoterSet},
+	leader::{self, voter, Error as PbftError, VoterSet},
 	BlockNumberOps,
 };
 use futures::{future, Future, Sink, SinkExt, Stream, TryStreamExt};
@@ -62,21 +62,26 @@ pub(crate) mod notification;
 pub(crate) mod until_imported;
 
 pub use notification::{PbftJustificationSender, PbftJustificationStream};
+pub use communication::pbft_protocol_name::standard_name as protocol_standard_name;
 use until_imported::UntilGlobalMessageBlocksImported;
 
 /// A PBFT message for a substrate chain.
 pub type Message<Block> = leader::Message<NumberFor<Block>, <Block as BlockT>::Hash>;
 
 /// A signed message
-pub type SignedMessage<Block: BlockT> =
-	leader::SignedMessage<NumberFor<Block>, Block::Hash, AuthoritySignature, AuthorityId>;
+pub type SignedMessage<Block> = leader::SignedMessage<
+	NumberFor<Block>,
+	<Block as BlockT>::Hash,
+	AuthoritySignature,
+	AuthorityId,
+>;
 
 /// A preprepare message for this chain's block type.
-pub type PrePrepare<Block: BlockT> = leader::PrePrepare<NumberFor<Block>, Block::Hash>;
+pub type PrePrepare<Block> = leader::PrePrepare<NumberFor<Block>, <Block as BlockT>::Hash>;
 /// A prepare message for this chain's block type.
-pub type Prepare<Block: BlockT> = leader::Prepare<NumberFor<Block>, Block::Hash>;
+pub type Prepare<Block> = leader::Prepare<NumberFor<Block>, <Block as BlockT>::Hash>;
 /// A commit message for this chain's block type.
-pub type Commit<Block: BlockT> = leader::Commit<NumberFor<Block>, Block::Hash>;
+pub type Commit<Block> = leader::Commit<NumberFor<Block>, <Block as BlockT>::Hash>;
 
 /// A catch up message for this chain's block type.
 pub type CatchUp<Block> =
@@ -111,8 +116,8 @@ type GlobalCommunicationIn<Block> = leader::voter::GlobalMessageIn<
 /// Global communication input stream for commits and catch up messages, with
 /// the hash type not being derived from the block, useful for forcing the hash
 /// to some type (e.g. `H256`) when the compiler can't do the inference.
-type GlobalCommunicationInH<Block, H> =
-	leader::voter::GlobalMessageIn<H, NumberFor<Block>, AuthoritySignature, AuthorityId>;
+// type GlobalCommunicationInH<Block, H> =
+// leader::voter::GlobalMessageIn<H, NumberFor<Block>, AuthoritySignature, AuthorityId>;
 
 /// Global communication sink for commits with the hash type not being derived
 /// from the block, useful for forcing the hash to some type (e.g. `H256`) when
@@ -123,8 +128,8 @@ type GlobalCommunicationOut<Block> = leader::voter::GlobalMessageOut<
 	AuthoritySignature,
 	AuthorityId,
 >;
-type GlobalCommunicationOutH<Block, H> =
-	leader::voter::GlobalMessageOut<H, NumberFor<Block>, AuthoritySignature, AuthorityId>;
+// type GlobalCommunicationOutH<Block, H> =
+// 	leader::voter::GlobalMessageOut<H, NumberFor<Block>, AuthoritySignature, AuthorityId>;
 
 /// Shared voter state for querying.
 #[derive(Clone)]
@@ -159,9 +164,11 @@ impl<Block: BlockT> SharedVoterState<Block> {
 	}
 
 	// TODO: FKY: Get the inner `VoterState` instance.
-	// pub fn voter_state(&self) -> Option<voter::report::VoterState<AuthorityId>> {
-	// 	self.inner.read().as_ref().map(|vs| vs.get())
-	// }
+	pub fn voter_state(
+		&self,
+	) -> Option<leader::voter::report::VoterState<Block::Hash, AuthorityId>> {
+		self.inner.read().as_ref().map(|vs| vs.get())
+	}
 }
 
 /// Link between the block importer and the background voter.
@@ -500,6 +507,42 @@ where
 		);
 
 		match &*self.env.voter_set_state.read() {
+			VoterSetState::Live { completed_views, .. } => {
+				let last_finalized = (chain_info.finalized_hash, chain_info.finalized_number);
+
+				let global_comms = global_communication(
+					self.env.set_id,
+					&self.env.voters,
+					self.env.client.clone(),
+					&self.env.network,
+					self.env.config.keystore.as_ref(),
+					self.metrics.as_ref().map(|m| m.until_imported.clone()),
+				);
+
+				let last_completed_view = completed_views.last();
+
+				let mut voter = voter::Voter::new(
+					self.env.clone(),
+					(*self.env.voters).clone(),
+					global_comms,
+					last_completed_view.number,
+					last_completed_view.base,
+				);
+
+				// Repoint shared_voter_state so that the RPC endpoint can query the state
+				if self.shared_voter_state.reset(voter.voter_state()).is_none() {
+					info!(target: "afg",
+						"Timed out trying to update shared GRANDPA voter state. \
+						RPC endpoints may return stale data."
+					);
+				}
+
+				self.voter = Box::pin(async move {
+					// TODO: Result<>
+					voter.run().await;
+					Ok(())
+				});
+			},
 			VoterSetState::Paused { .. } => self.voter = Box::pin(future::pending()),
 		};
 	}

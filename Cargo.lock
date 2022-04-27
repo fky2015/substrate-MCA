@@ -4911,6 +4911,7 @@ dependencies = [
  "pallet-aura",
  "pallet-balances",
  "pallet-grandpa",
+ "pallet-pbft",
  "pallet-randomness-collective-flip",
  "pallet-sudo",
  "pallet-template",
@@ -5966,6 +5967,36 @@ dependencies = [
  "sp-core",
  "sp-io",
  "sp-runtime",
+ "sp-staking",
+ "sp-std",
+]
+
+[[package]]
+name = "pallet-pbft"
+version = "0.1.0"
+dependencies = [
+ "finality-grandpa",
+ "frame-benchmarking",
+ "frame-election-provider-support",
+ "frame-support",
+ "frame-system",
+ "log 0.4.14",
+ "pallet-authorship",
+ "pallet-balances",
+ "pallet-offences",
+ "pallet-session",
+ "pallet-staking",
+ "pallet-staking-reward-curve",
+ "pallet-timestamp",
+ "parity-scale-codec",
+ "scale-info",
+ "sp-application-crypto",
+ "sp-core",
+ "sp-finality-pbft",
+ "sp-io",
+ "sp-keyring",
+ "sp-runtime",
+ "sp-session",
  "sp-staking",
  "sp-std",
 ]

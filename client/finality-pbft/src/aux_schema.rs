@@ -33,7 +33,7 @@ pub(crate) fn load_decode<B: AuxStore, T: Decode>(
 	match backend.get_aux(key)? {
 		None => Ok(None),
 		Some(t) => T::decode(&mut &t[..])
-			.map_err(|e| ClientError::Backend(format!("GRANDPA DB is corrupted: {}", e)))
+			.map_err(|e| ClientError::Backend(format!("PBFT DB is corrupted: {}", e)))
 			.map(Some),
 	}
 }
@@ -83,14 +83,19 @@ where
 		},
 		Some(other) => {
 			return Err(ClientError::Backend(format!(
-				"Unsupported GRANDPA DB version: {:?}",
+				"Unsupported PBFT DB version: {:?}",
 				other
 			)))
 		},
+        _ => {
+			return Err(ClientError::Backend(format!(
+				"Unsupported PBFT DB version: None",
+			)))
+        }
 	}
 
 	// genesis.
-	info!(target: "afg", "👴 Loading GRANDPA authority set \
+	info!(target: "afg", "👴 Loading PBFT authority set \
 		from genesis on what appears to be first startup.");
 
 	let genesis_authorities = genesis_authorities()?;
