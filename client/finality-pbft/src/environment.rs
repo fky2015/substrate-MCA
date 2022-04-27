@@ -10,22 +10,29 @@ use crate::{
 	authorities::{AuthoritySet, SharedAuthoritySet},
 	communication::Network as NetworkT,
 	justification::PbftJustification,
-	ClientForPbft, CommandOrError, Commit, Config, Error, FinalizedCommit, PrePrepare, Prepare,
-	SignedMessage,
+	notification::PbftJustificationSender,
+	ClientForPbft, CommandOrError, Commit, Config, Error, FinalizedCommit, NewAuthoritySet,
+	PrePrepare, Prepare, SignedMessage, VoterCommand,
 };
 use finality_grandpa::{
 	leader::{self, Error as PbftError, State as ViewState, VoterSet},
 	BlockNumberOps,
 };
 use futures::{Future, Sink, Stream};
+use log::{debug, warn};
 use parity_scale_codec::{Decode, Encode};
 use parking_lot::RwLock;
 use prometheus_endpoint::{register, Counter, Gauge, PrometheusError, U64};
-use sc_client_api::backend::Backend as BackendT;
-use sc_telemetry::TelemetryHandle;
+use sc_client_api::{apply_aux, backend::Backend as BackendT, utils::is_descendent_of};
+use sc_telemetry::{telemetry, TelemetryHandle, CONSENSUS_DEBUG, CONSENSUS_INFO};
 use sp_consensus::SelectChain as SelectChainT;
-use sp_finality_pbft::{AuthorityId, AuthoritySignature, PbftApi, SetId, ViewNumber};
-use sp_runtime::traits::{Block as BlockT, Header as HeaderT, NumberFor};
+use sp_finality_pbft::{
+	AuthorityId, AuthoritySignature, PbftApi, SetId, ViewNumber, PBFT_ENGINE_ID,
+};
+use sp_runtime::{
+	generic::BlockId,
+	traits::{Block as BlockT, Header as HeaderT, NumberFor, Zero},
+};
 
 /// The environment we run PBFT in.
 pub(crate) struct Environment<Backend, Block: BlockT, C, N: NetworkT<Block>, SC> {
@@ -38,9 +45,39 @@ pub(crate) struct Environment<Backend, Block: BlockT, C, N: NetworkT<Block>, SC>
 	pub(crate) set_id: SetId,
 	pub(crate) voter_set_state: SharedVoterSetState<Block>,
 	pub(crate) metrics: Option<Metrics>,
-	// pub(crate) justification_sender: Option<GrandpaJustificationSender<Block>>,
+	pub(crate) justification_sender: Option<PbftJustificationSender<Block>>,
 	pub(crate) telemetry: Option<TelemetryHandle>,
 	pub(crate) _phantom: PhantomData<Backend>,
+}
+
+impl<BE, Block: BlockT, C, N: NetworkT<Block>, SC> Environment<BE, Block, C, N, SC> {
+	/// Updates the voter set state using the given closure. The write lock is
+	/// held during evaluation of the closure and the environment's voter set
+	/// state is set to its result if successful.
+	pub(crate) fn update_voter_set_state<F>(&self, f: F) -> Result<(), Error>
+	where
+		F: FnOnce(&VoterSetState<Block>) -> Result<Option<VoterSetState<Block>>, Error>,
+	{
+		self.voter_set_state.with(|voter_set_state| {
+			if let Some(set_state) = f(&voter_set_state)? {
+				*voter_set_state = set_state;
+
+				if let Some(metrics) = self.metrics.as_ref() {
+					if let VoterSetState::Live { completed_views, .. } = voter_set_state {
+						let highest = completed_views
+							.views
+							.iter()
+							.map(|round| round.number)
+							.max()
+							.expect("There is always one completed view (genesis); qed");
+
+						metrics.finality_pbft_view.set(highest);
+					}
+				}
+			}
+			Ok(())
+		})
+	}
 }
 
 impl<B, Block, C, N, SC> leader::voter::Environment for Environment<B, Block, C, N, SC>
@@ -62,7 +99,6 @@ where
 	type In = Pin<
 		Box<
 			dyn Stream<
-					// FIXME:
 					Item = Result<
 						::finality_grandpa::leader::SignedMessage<
 							NumberFor<Block>,
@@ -79,7 +115,6 @@ where
 	type Out = Pin<
 		Box<
 			dyn Sink<
-					// FIXME:
 					::finality_grandpa::leader::Message<NumberFor<Block>, Block::Hash>,
 					Error = Self::Error,
 				> + Send,
@@ -484,7 +519,7 @@ pub(crate) enum JustificationOrCommit<Block: BlockT> {
 }
 
 impl<Block: BlockT> From<(ViewNumber, FinalizedCommit<Block>)> for JustificationOrCommit<Block> {
-	fn from(commit: (ViewNumber, Commit<Block>)) -> JustificationOrCommit<Block> {
+	fn from(commit: (ViewNumber, FinalizedCommit<Block>)) -> JustificationOrCommit<Block> {
 		JustificationOrCommit::Commit(commit)
 	}
 }
@@ -513,7 +548,7 @@ pub(crate) fn finalize_block<BE, Block, Client>(
 where
 	Block: BlockT,
 	BE: BackendT<Block>,
-	Client: ClientForGrandpa<Block, BE>,
+	Client: ClientForPbft<Block, BE>,
 {
 	// NOTE: lock must be held through writing to DB to avoid race. this lock
 	//       also implicitly synchronizes the check for last finalized number
@@ -551,8 +586,8 @@ where
 
 		// send a justification notification if a sender exists and in case of error log it.
 		fn notify_justification<Block: BlockT>(
-			justification_sender: Option<&GrandpaJustificationSender<Block>>,
-			justification: impl FnOnce() -> Result<GrandpaJustification<Block>, Error>,
+			justification_sender: Option<&PbftJustificationSender<Block>>,
+			justification: impl FnOnce() -> Result<PbftJustification<Block>, Error>,
 		) {
 			if let Some(sender) = justification_sender {
 				if let Err(err) = sender.notify(justification) {
@@ -587,8 +622,7 @@ where
 					}
 				}
 
-				let justification =
-					GrandpaJustification::from_commit(&client, round_number, commit)?;
+				let justification = PbftJustification::from_commit(&client, round_number, commit)?;
 
 				(justification_required, justification)
 			},
@@ -597,7 +631,7 @@ where
 		notify_justification(justification_sender, || Ok(justification.clone()));
 
 		let persisted_justification = if justification_required {
-			Some((GRANDPA_ENGINE_ID, justification.encode()))
+			Some((PBFT_ENGINE_ID, justification.encode()))
 		} else {
 			None
 		};

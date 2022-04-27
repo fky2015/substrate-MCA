@@ -15,6 +15,7 @@ use sp_runtime::traits::{Block as BlockT, NumberFor};
 use crate::{
 	authorities::{AuthoritySet, SharedAuthoritySet},
 	environment::{SharedVoterSetState, VoterSetState},
+	NewAuthoritySet, justification::PbftJustification,
 };
 
 const VERSION_KEY: &[u8] = b"pbft_schema_version";
@@ -145,6 +146,23 @@ where
 		write_aux(&[(AUTHORITY_SET_KEY, &encoded_set[..])])
 	}
 }
+
+/// Update the justification for the latest finalized block on-disk.
+///
+/// We always keep around the justification for the best finalized block and overwrite it
+/// as we finalize new blocks, this makes sure that we don't store useless justifications
+/// but can always prove finality of the latest block.
+pub(crate) fn update_best_justification<Block: BlockT, F, R>(
+	justification: &PbftJustification<Block>,
+	write_aux: F,
+) -> R
+where
+	F: FnOnce(&[(&'static [u8], &[u8])]) -> R,
+{
+	let encoded_justification = justification.encode();
+	write_aux(&[(BEST_JUSTIFICATION, &encoded_justification[..])])
+}
+
 /// Write voter set state.
 pub(crate) fn write_voter_set_state<Block: BlockT, B: AuxStore>(
 	backend: &B,

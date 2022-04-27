@@ -15,8 +15,8 @@ use sp_runtime::{
 use crate::{AuthorityList, Error, FinalizedCommit};
 
 /// A GRANDPA justification for block finality, it includes a commit message and
-/// an ancestry proof including all headers routing all precommit target blocks
-/// to the commit target block. Due to the current voting strategy the precommit
+/// an ancestry proof including all headers routing all commit target blocks
+/// to the commit target block. Due to the current voting strategy the commit
 /// targets should be the same as the commit target, since honest voters don't
 /// vote past authority set change blocks.
 ///
@@ -56,7 +56,7 @@ impl<Block: BlockT> PbftJustification<Block> {
 		let justification = PbftJustification::<Block>::decode(&mut &*encoded)
 			.map_err(|_| ClientError::JustificationDecode)?;
 
-		if (justification.commit.target_hash, justification.commit.target_number)
+		if (justification.f_commit.target_hash, justification.f_commit.target_number)
 			!= finalized_target
 		{
 			let msg = "invalid commit target in pbft justification".to_string();
@@ -71,7 +71,7 @@ impl<Block: BlockT> PbftJustification<Block> {
 	where
 		NumberFor<Block>: leader::BlockNumberOps,
 	{
-		let voters = VoterSet::new(authorities.iter().cloned())
+		let voters = VoterSet::new(authorities.to_vec())
 			.ok_or(ClientError::Consensus(sp_consensus::Error::InvalidAuthoritiesSet))?;
 
 		self.verify_with_voter_set(set_id, &voters)
@@ -87,29 +87,28 @@ impl<Block: BlockT> PbftJustification<Block> {
 		NumberFor<Block>: leader::BlockNumberOps,
 	{
 		let mut buf = Vec::new();
-		let mut visited_hashes = HashSet::new();
-		for signed in self.commit.precommits.iter() {
+		for signed in self.f_commit.commits.iter() {
 			if !sp_finality_pbft::check_message_signature_with_buffer(
-				&leader::Message::Precommit(signed.precommit.clone()),
+				&leader::Message::Commit(signed.commit.clone()),
 				&signed.id,
 				&signed.signature,
-				self.round,
+				self.view,
 				set_id,
 				&mut buf,
 			) {
 				return Err(ClientError::BadJustification(
 					// FIXME:
-					"invalid signature for precommit in pbft justification".to_string(),
+					"invalid signature for commit in pbft justification".to_string(),
 				));
 			}
 
-			if self.commit.target_hash == signed.precommit.target_hash {
+			if self.f_commit.target_hash == signed.commit.target_hash {
 				continue;
 			}
 
 			return Err(ClientError::BadJustification(
 				// FIXME:
-				"invalid precommit ancestry proof in pbft justification".to_string(),
+				"invalid commit ancestry proof in pbft justification".to_string(),
 			));
 		}
 
@@ -118,6 +117,6 @@ impl<Block: BlockT> PbftJustification<Block> {
 
 	/// The target block number and hash that this justifications proves finality for.
 	pub fn target(&self) -> (NumberFor<Block>, Block::Hash) {
-		(self.commit.target_number, self.commit.target_hash)
+		(self.f_commit.target_number, self.f_commit.target_hash)
 	}
 }

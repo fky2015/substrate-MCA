@@ -33,6 +33,8 @@ use sp_runtime::{
 	traits::{Block as BlockT, Header as HeaderT, NumberFor, Zero},
 };
 
+use sp_runtime::RuntimeAppPublic;
+
 // utility logging macro that takes as first argument a conditional to
 // decide whether to log under debug or info level (useful to restrict
 // logging under initial sync).
@@ -59,6 +61,7 @@ pub(crate) mod justification;
 pub(crate) mod notification;
 pub(crate) mod until_imported;
 
+pub use notification::{PbftJustificationSender, PbftJustificationStream};
 use until_imported::UntilGlobalMessageBlocksImported;
 
 /// A PBFT message for a substrate chain.
@@ -287,7 +290,7 @@ where
 
 	let (voter_commands_tx, voter_commands_rx) = tracing_unbounded("mpsc_grandpa_voter_command");
 
-	// let (justification_sender, justification_stream) = GrandpaJustificationStream::channel();
+	let (justification_sender, justification_stream) = PbftJustificationStream::channel();
 
 	// create pending change objects with 0 delay for each authority set hard fork.
 	let authority_set_hard_forks = authority_set_hard_forks
@@ -319,6 +322,7 @@ where
 			persistent_data.authority_set.clone(),
 			voter_commands_tx,
 			authority_set_hard_forks,
+			justification_sender.clone(),
 			telemetry.clone(),
 		),
 		LinkHalf { client, select_chain, persistent_data, voter_commands_rx, telemetry },
@@ -414,7 +418,7 @@ where
 		voter_commands_rx: TracingUnboundedReceiver<VoterCommand<Block::Hash, NumberFor<Block>>>,
 		prometheus_registry: Option<prometheus_endpoint::Registry>,
 		shared_voter_state: SharedVoterState<Block>,
-		// justification_sender: GrandpaJustificationSender<Block>,
+		justification_sender: PbftJustificationSender<Block>,
 		telemetry: Option<TelemetryHandle>,
 	) -> Self {
 		let metrics = match prometheus_registry.as_ref().map(Metrics::register) {
@@ -437,7 +441,7 @@ where
 			authority_set: persistent_data.authority_set.clone(),
 			voter_set_state: persistent_data.set_state,
 			metrics: metrics.as_ref().map(|m| m.environment.clone()),
-			// justification_sender: Some(justification_sender),
+			justification_sender: Some(justification_sender),
 			telemetry: telemetry.clone(),
 			_phantom: PhantomData,
 		});
@@ -531,7 +535,7 @@ where
 					Ok(Some(set_state))
 				})?;
 
-				let voters = Arc::new(VoterSet::new(new.authorities.into_iter()).expect(
+				let voters = Arc::new(VoterSet::new(new.authorities.to_vec()).expect(
 					"new authorities come from pending change; pending change comes from \
 					 `AuthoritySet`; `AuthoritySet` validates authorities is non-empty and \
 					 weights are non-zero; qed.",
@@ -547,7 +551,7 @@ where
 					authority_set: self.env.authority_set.clone(),
 					network: self.env.network.clone(),
 					metrics: self.env.metrics.clone(),
-					// justification_sender: self.env.justification_sender.clone(),
+					justification_sender: self.env.justification_sender.clone(),
 					telemetry: self.telemetry.clone(),
 					_phantom: PhantomData,
 				});
@@ -616,6 +620,15 @@ where
 pub struct Config {
 	/// The expected duration for a message to be gossiped across the network.
 	pub gossip_duration: Duration,
+	/// Justification generation period (in blocks). GRANDPA will try to generate justifications
+	/// at least every justification_period blocks. There are some other events which might cause
+	/// justification generation.
+	pub justification_period: u32,
+	/// Whether the GRANDPA observer protocol is live on the network and thereby
+	/// a full-node not running as a validator is running the GRANDPA observer
+	/// protocol (we will only issue catch-up requests to authorities when the
+	/// observer protocol is enabled).
+	pub observer_enabled: bool,
 	/// The role of the local node (i.e. authority, full-node or light).
 	pub local_role: sc_network::config::Role,
 	/// Some local identifier of the voter.
@@ -650,6 +663,15 @@ pub(crate) enum VoterCommand<H, N> {
 	Pause(String),
 	/// New authorities.
 	ChangeAuthorities(NewAuthoritySet<H, N>),
+}
+
+impl<H, N> fmt::Display for VoterCommand<H, N> {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		match *self {
+			VoterCommand::Pause(ref reason) => write!(f, "Pausing voter: {}", reason),
+			VoterCommand::ChangeAuthorities(_) => write!(f, "Changing authorities"),
+		}
+	}
 }
 
 /// Signals either an early exit of a voter or an error.
@@ -805,9 +827,7 @@ fn local_authority_id(
 	keystore.and_then(|keystore| {
 		voters
 			.iter()
-			.find(|(p, _)| {
-				SyncCryptoStore::has_keys(&**keystore, &[(p.to_raw_vec(), AuthorityId::ID)])
-			})
-			.map(|(p, _)| p.clone())
+			.find(|p| SyncCryptoStore::has_keys(&**keystore, &[(p.to_raw_vec(), AuthorityId::ID)]))
+			.map(|p| p.clone())
 	})
 }
