@@ -144,17 +144,18 @@ where
 
 	fn finalize_block(
 		&self,
+		view: u64,
 		hash: Self::Hash,
 		number: Self::Number,
-		// commit: Message::Commit,
-	) -> bool {
+		f_commit: FinalizedCommit<Block>,
+	) -> Result<(), Self::Error> {
 		finalize_block(
 			self.client.clone(),
 			&self.authority_set,
 			Some(self.config.justification_period.into()),
 			hash,
 			number,
-			(view, commit).into(),
+			(view, f_commit).into(),
 			false,
 			self.justification_sender.as_ref(),
 			self.telemetry.clone(),

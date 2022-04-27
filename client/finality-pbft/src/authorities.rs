@@ -84,7 +84,7 @@ where
 
 	/// Get the current authorities and their weights (for the current set ID).
 	pub fn current_authorities(&self) -> VoterSet<AuthorityId> {
-		VoterSet::new(self.inner().current_authorities).expect(
+		VoterSet::new(self.inner().current_authorities.clone()).expect(
 			"current_authorities is non-empty and weights are non-zero; \
 			 constructor and all mutating operations on `AuthoritySet` ensure this; \
 			 qed.",

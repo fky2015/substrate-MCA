@@ -476,6 +476,9 @@ impl<Block: BlockT> BlockUntilImported<Block> for BlockGlobalMessage<Block> {
 						}
 					}
 				},
+
+				// TODO:
+				msg => return Ok(DiscardWaitOrReady::Ready(msg)),
 			};
 		}
 
