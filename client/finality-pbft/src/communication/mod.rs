@@ -744,6 +744,7 @@ fn check_compact_commit<Block: BlockT>(
 	set_id: SetId,
 	telemetry: Option<&TelemetryHandle>,
 ) -> Result<(), ReputationChange> {
+	// TODO: refactor
 	// check total len is not out of range.
 	if &msg.auth_data.len() > &voters.len().get() {
 		return Err(cost::MALFORMED_COMMIT);
@@ -756,8 +757,8 @@ fn check_compact_commit<Block: BlockT>(
 		}
 	}
 
-    // Super majority.
-	if voters.len().get() < voters.threshould() {
+	// Super majority.
+	if &msg.auth_data.len() < &voters.threshould() {
 		return Err(cost::MALFORMED_COMMIT);
 	}
 
@@ -804,36 +805,50 @@ fn check_catch_up<Block: BlockT>(
 	set_id: SetId,
 	telemetry: Option<TelemetryHandle>,
 ) -> Result<(), ReputationChange> {
-	// check total weight is not out of range for a set of votes.
-	fn check_weight<'a>(
-		voters: &'a VoterSet<AuthorityId>,
-		votes: impl Iterator<Item = &'a AuthorityId>,
-		full_threshold: u64,
-	) -> Result<(), ReputationChange> {
-		let mut total_weight = 0;
+	let full_len = voters.len().get();
 
-		for id in votes {
-			if let Some(weight) = voters.get(&id).map(|info| info.weight()) {
-				total_weight += weight.get();
-				if total_weight > full_threshold {
-					return Err(cost::MALFORMED_CATCH_UP);
-				}
-			} else {
+	fn check_len<'a>(
+		voters: &VoterSet<AuthorityId>,
+		threshould: usize,
+		msgs_len: usize,
+		msgs: impl Iterator<Item = &'a AuthorityId>,
+		full_len: usize,
+	) -> Result<(), ReputationChange> {
+		// Super majority.
+		if msgs_len < threshould {
+			return Err(cost::MALFORMED_CATCH_UP);
+		}
+
+		// check total len is not out of range.
+		if msgs_len > full_len {
+			return Err(cost::MALFORMED_CATCH_UP);
+		}
+
+		for id in msgs {
+			if let None = voters.get(&id) {
 				debug!(target: "afg", "Skipping catch up message containing unknown voter {}", id);
 				return Err(cost::MALFORMED_CATCH_UP);
 			}
 		}
 
-		if total_weight < voters.threshold().get() {
-			return Err(cost::MALFORMED_CATCH_UP);
-		}
-
 		Ok(())
 	}
 
-	check_weight(voters, msg.prevotes.iter().map(|vote| &vote.id), full_threshold)?;
+	check_len(
+		voters,
+		voters.threshould(),
+		msg.prepares.len(),
+		msg.prepares.iter().map(|vote| &vote.id),
+		full_len,
+	)?;
 
-	check_weight(voters, msg.precommits.iter().map(|vote| &vote.id), full_threshold)?;
+	check_len(
+		voters,
+		voters.threshould(),
+		msg.commits.len(),
+		msg.commits.iter().map(|vote| &vote.id),
+		full_len,
+	)?;
 
 	fn check_signatures<'a, B, I>(
 		messages: I,
@@ -879,10 +894,10 @@ fn check_catch_up<Block: BlockT>(
 
 	// check signatures on all contained prevotes.
 	let signatures_checked = check_signatures::<Block, _>(
-		msg.prevotes.iter().map(|vote| {
-			(finality_grandpa::Message::Prevote(vote.prevote.clone()), &vote.id, &vote.signature)
+		msg.prepares.iter().map(|vote| {
+			(leader::Message::Prepare(vote.prepare.clone()), &vote.id, &vote.signature)
 		}),
-		msg.round_number,
+		msg.view_number,
 		set_id.0,
 		0,
 		&mut buf,
@@ -891,14 +906,10 @@ fn check_catch_up<Block: BlockT>(
 
 	// check signatures on all contained precommits.
 	let _ = check_signatures::<Block, _>(
-		msg.precommits.iter().map(|vote| {
-			(
-				finality_grandpa::Message::Precommit(vote.precommit.clone()),
-				&vote.id,
-				&vote.signature,
-			)
-		}),
-		msg.round_number,
+		msg.commits
+			.iter()
+			.map(|vote| (leader::Message::Commit(vote.commit.clone()), &vote.id, &vote.signature)),
+		msg.view_number,
 		set_id.0,
 		signatures_checked,
 		&mut buf,
@@ -953,17 +964,34 @@ impl<Block: BlockT> Sink<(ViewNumber, FinalizedCommit<Block>)> for CommitsOut<Bl
 			return Ok(());
 		}
 
-		let (view, message) = input;
+		let (view, f_commit) = input;
 		let view = View(view);
 
 		telemetry!(
 			self.telemetry;
 			CONSENSUS_DEBUG;
 			"afg.global_message";
-			"msg" => ?format!("{}", message),
+			"target_number" => ?f_commit.target_number,
+			"target_hash" => ?f_commit.target_hash,
 		);
+		let (commits, auth_data) = f_commit
+			.commits
+			.into_iter()
+			.map(|signed| (signed.commit, (signed.signature, signed.id)))
+			.unzip();
 
-		let message = input.1;
+		let compact_commit = CompactCommit::<Block> {
+			target_hash: f_commit.target_hash,
+			target_number: f_commit.target_number,
+			commits,
+			auth_data,
+		};
+
+		let message = GossipMessage::Commit(FullCommitMessage::<Block> {
+			view,
+			set_id: self.set_id,
+			message: compact_commit,
+		});
 
 		let topic = global_topic::<Block>(self.set_id.0);
 
@@ -972,9 +1000,7 @@ impl<Block: BlockT> Sink<(ViewNumber, FinalizedCommit<Block>)> for CommitsOut<Bl
 		self.gossip_validator.note_commit_finalized(
 			view,
 			self.set_id,
-			// FIXME:
-			// commit.target_number,
-			0,
+			f_commit.target_number,
 			|to, neighbor| self.neighbor_sender.send(to, neighbor),
 		);
 		self.network.lock().gossip_message(topic, message.encode(), false);
