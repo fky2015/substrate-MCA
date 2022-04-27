@@ -67,18 +67,25 @@ where
 						Some(state) => state,
 						None => {
 							let state = make_genesis_round();
-							let base = state.prevote_ghost
+							let base = state.finalized
 							.expect("state is for completed round; completed rounds must have a prevote ghost; qed.");
 
 							VoterSetState::live(set.set_id, &set, base)
 						},
 					};
 
-				return Ok(PersistentData { authority_set: set.into(), set_state: set_state.into() })
+				return Ok(PersistentData {
+					authority_set: set.into(),
+					set_state: set_state.into(),
+				});
 			}
 		},
-		Some(other) =>
-			return Err(ClientError::Backend(format!("Unsupported GRANDPA DB version: {:?}", other))),
+		Some(other) => {
+			return Err(ClientError::Backend(format!(
+				"Unsupported GRANDPA DB version: {:?}",
+				other
+			)))
+		},
 	}
 
 	// genesis.
@@ -90,7 +97,7 @@ where
 		.expect("genesis authorities is non-empty; all weights are non-zero; qed.");
 	let state = make_genesis_round();
 	let base = state
-		.prevote_ghost
+		.finalized
 		.expect("state is for completed round; completed rounds must have a prevote ghost; qed.");
 
 	let genesis_state = VoterSetState::live(0, &genesis_set, base);
@@ -106,6 +113,38 @@ where
 	Ok(PersistentData { authority_set: genesis_set.into(), set_state: genesis_state.into() })
 }
 
+/// Update the authority set on disk after a change.
+///
+/// If there has just been a handoff, pass a `new_set` parameter that describes the
+/// handoff. `set` in all cases should reflect the current authority set, with all
+/// changes and handoffs applied.
+pub(crate) fn update_authority_set<Block: BlockT, F, R>(
+	set: &AuthoritySet<Block::Hash, NumberFor<Block>>,
+	new_set: Option<&NewAuthoritySet<Block::Hash, NumberFor<Block>>>,
+	write_aux: F,
+) -> R
+where
+	F: FnOnce(&[(&'static [u8], &[u8])]) -> R,
+{
+	// write new authority set state to disk.
+	let encoded_set = set.encode();
+
+	if let Some(new_set) = new_set {
+		// we also overwrite the "last completed round" entry with a blank slate
+		// because from the perspective of the finality gadget, the chain has
+		// reset.
+		let set_state = VoterSetState::<Block>::live(
+			new_set.set_id,
+			&set,
+			(new_set.canon_hash, new_set.canon_number),
+		);
+		let encoded = set_state.encode();
+
+		write_aux(&[(AUTHORITY_SET_KEY, &encoded_set[..]), (SET_STATE_KEY, &encoded[..])])
+	} else {
+		write_aux(&[(AUTHORITY_SET_KEY, &encoded_set[..])])
+	}
+}
 /// Write voter set state.
 pub(crate) fn write_voter_set_state<Block: BlockT, B: AuxStore>(
 	backend: &B,

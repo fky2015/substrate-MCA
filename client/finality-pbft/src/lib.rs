@@ -2,6 +2,7 @@ use std::{marker::PhantomData, pin::Pin, sync::Arc, time::Duration};
 
 use crate::environment::VoterSetState;
 use authorities::SharedAuthoritySet;
+use authorities::{AuthoritySet, AuthoritySetChanges};
 use aux_schema::PersistentData;
 use communication::{Network as NetworkT, NetworkBridge};
 use environment::Environment;
@@ -49,12 +50,13 @@ macro_rules! afg_log {
 	};
 }
 
-pub(crate) mod communication;
-pub(crate) mod import;
-
 pub(crate) mod authorities;
 pub(crate) mod aux_schema;
+pub(crate) mod communication;
 pub(crate) mod environment;
+pub(crate) mod import;
+pub(crate) mod justification;
+pub(crate) mod notification;
 pub(crate) mod until_imported;
 
 use until_imported::UntilGlobalMessageBlocksImported;

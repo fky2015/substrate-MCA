@@ -9,7 +9,9 @@ use std::{
 use crate::{
 	authorities::{AuthoritySet, SharedAuthoritySet},
 	communication::Network as NetworkT,
-	ClientForPbft, CommandOrError, Commit, Config, Error, PrePrepare, Prepare, SignedMessage,
+	justification::PbftJustification,
+	ClientForPbft, CommandOrError, Commit, Config, Error, FinalizedCommit, PrePrepare, Prepare,
+	SignedMessage,
 };
 use finality_grandpa::{
 	leader::{self, Error as PbftError, State as ViewState, VoterSet},
@@ -111,7 +113,17 @@ where
 		number: Self::Number,
 		// commit: Message::Commit,
 	) -> bool {
-		todo!()
+		finalize_block(
+			self.client.clone(),
+			&self.authority_set,
+			Some(self.config.justification_period.into()),
+			hash,
+			number,
+			(view, commit).into(),
+			false,
+			self.justification_sender.as_ref(),
+			self.telemetry.clone(),
+		)
 	}
 }
 
@@ -463,5 +475,212 @@ impl Metrics {
 				registry,
 			)?,
 		})
+	}
+}
+
+pub(crate) enum JustificationOrCommit<Block: BlockT> {
+	Justification(PbftJustification<Block>),
+	Commit((ViewNumber, FinalizedCommit<Block>)),
+}
+
+impl<Block: BlockT> From<(ViewNumber, FinalizedCommit<Block>)> for JustificationOrCommit<Block> {
+	fn from(commit: (ViewNumber, Commit<Block>)) -> JustificationOrCommit<Block> {
+		JustificationOrCommit::Commit(commit)
+	}
+}
+
+impl<Block: BlockT> From<PbftJustification<Block>> for JustificationOrCommit<Block> {
+	fn from(justification: PbftJustification<Block>) -> JustificationOrCommit<Block> {
+		JustificationOrCommit::Justification(justification)
+	}
+}
+
+/// Finalize the given block and apply any authority set changes. If an
+/// authority set change is enacted then a justification is created (if not
+/// given) and stored with the block when finalizing it.
+/// This method assumes that the block being finalized has already been imported.
+pub(crate) fn finalize_block<BE, Block, Client>(
+	client: Arc<Client>,
+	authority_set: &SharedAuthoritySet<Block::Hash, NumberFor<Block>>,
+	justification_period: Option<NumberFor<Block>>,
+	hash: Block::Hash,
+	number: NumberFor<Block>,
+	justification_or_commit: JustificationOrCommit<Block>,
+	initial_sync: bool,
+	justification_sender: Option<&PbftJustificationSender<Block>>,
+	telemetry: Option<TelemetryHandle>,
+) -> Result<(), CommandOrError<Block::Hash, NumberFor<Block>>>
+where
+	Block: BlockT,
+	BE: BackendT<Block>,
+	Client: ClientForGrandpa<Block, BE>,
+{
+	// NOTE: lock must be held through writing to DB to avoid race. this lock
+	//       also implicitly synchronizes the check for last finalized number
+	//       below.
+	let mut authority_set = authority_set.inner();
+
+	let status = client.info();
+
+	if number <= status.finalized_number && client.hash(number)? == Some(hash) {
+		// This can happen after a forced change (triggered manually from the runtime when
+		// finality is stalled), since the voter will be restarted at the median last finalized
+		// block, which can be lower than the local best finalized block.
+		warn!(target: "afg", "Re-finalized block #{:?} ({:?}) in the canonical chain, current best finalized is #{:?}",
+				hash,
+				number,
+				status.finalized_number,
+		);
+
+		return Ok(());
+	}
+
+	// FIXME #1483: clone only when changed
+	let old_authority_set = authority_set.clone();
+
+	let update_res: Result<_, Error> = client.lock_import_and_run(|import_op| {
+		let status = authority_set
+			.apply_standard_changes(
+				hash,
+				number,
+				&is_descendent_of::<Block, _>(&*client, None),
+				initial_sync,
+				None,
+			)
+			.map_err(|e| Error::Safety(e.to_string()))?;
+
+		// send a justification notification if a sender exists and in case of error log it.
+		fn notify_justification<Block: BlockT>(
+			justification_sender: Option<&GrandpaJustificationSender<Block>>,
+			justification: impl FnOnce() -> Result<GrandpaJustification<Block>, Error>,
+		) {
+			if let Some(sender) = justification_sender {
+				if let Err(err) = sender.notify(justification) {
+					warn!(target: "afg", "Error creating justification for subscriber: {}", err);
+				}
+			}
+		}
+
+		// NOTE: this code assumes that honest voters will never vote past a
+		// transition block, thus we don't have to worry about the case where
+		// we have a transition with `effective_block = N`, but we finalize
+		// `N+1`. this assumption is required to make sure we store
+		// justifications for transition blocks which will be requested by
+		// syncing clients.
+		let (justification_required, justification) = match justification_or_commit {
+			JustificationOrCommit::Justification(justification) => (true, justification),
+			JustificationOrCommit::Commit((round_number, commit)) => {
+				let mut justification_required =
+					// justification is always required when block that enacts new authorities
+					// set is finalized
+					status.new_set_block.is_some();
+
+				// justification is required every N blocks to be able to prove blocks
+				// finalization to remote nodes
+				if !justification_required {
+					if let Some(justification_period) = justification_period {
+						let last_finalized_number = client.info().finalized_number;
+						justification_required = (!last_finalized_number.is_zero()
+							|| number - last_finalized_number == justification_period)
+							&& (last_finalized_number / justification_period
+								!= number / justification_period);
+					}
+				}
+
+				let justification =
+					GrandpaJustification::from_commit(&client, round_number, commit)?;
+
+				(justification_required, justification)
+			},
+		};
+
+		notify_justification(justification_sender, || Ok(justification.clone()));
+
+		let persisted_justification = if justification_required {
+			Some((GRANDPA_ENGINE_ID, justification.encode()))
+		} else {
+			None
+		};
+
+		// ideally some handle to a synchronization oracle would be used
+		// to avoid unconditionally notifying.
+		client
+			.apply_finality(import_op, BlockId::Hash(hash), persisted_justification, true)
+			.map_err(|e| {
+				warn!(target: "afg", "Error applying finality to block {:?}: {}", (hash, number), e);
+				e
+			})?;
+
+		debug!(target: "afg", "Finalizing blocks up to ({:?}, {})", number, hash);
+
+		telemetry!(
+			telemetry;
+			CONSENSUS_INFO;
+			"afg.finalized_blocks_up_to";
+			"number" => ?number, "hash" => ?hash,
+		);
+
+		crate::aux_schema::update_best_justification(&justification, |insert| {
+			apply_aux(import_op, insert, &[])
+		})?;
+
+		let new_authorities = if let Some((canon_hash, canon_number)) = status.new_set_block {
+			// the authority set has changed.
+			let (new_id, set_ref) = authority_set.current();
+
+			if set_ref.len() > 16 {
+				afg_log!(
+					initial_sync,
+					"👴 Applying GRANDPA set change to new set with {} authorities",
+					set_ref.len(),
+				);
+			} else {
+				afg_log!(initial_sync, "👴 Applying GRANDPA set change to new set {:?}", set_ref);
+			}
+
+			telemetry!(
+				telemetry;
+				CONSENSUS_INFO;
+				"afg.generating_new_authority_set";
+				"number" => ?canon_number, "hash" => ?canon_hash,
+				"authorities" => ?set_ref.to_vec(),
+				"set_id" => ?new_id,
+			);
+			Some(NewAuthoritySet {
+				canon_hash,
+				canon_number,
+				set_id: new_id,
+				authorities: set_ref.to_vec(),
+			})
+		} else {
+			None
+		};
+
+		if status.changed {
+			let write_result = crate::aux_schema::update_authority_set::<Block, _, _>(
+				&authority_set,
+				new_authorities.as_ref(),
+				|insert| apply_aux(import_op, insert, &[]),
+			);
+
+			if let Err(e) = write_result {
+				warn!(target: "afg", "Failed to write updated authority set to disk. Bailing.");
+				warn!(target: "afg", "Node is in a potentially inconsistent state.");
+
+				return Err(e.into());
+			}
+		}
+
+		Ok(new_authorities.map(VoterCommand::ChangeAuthorities))
+	});
+
+	match update_res {
+		Ok(Some(command)) => Err(CommandOrError::VoterCommand(command)),
+		Ok(None) => Ok(()),
+		Err(e) => {
+			*authority_set = old_authority_set;
+
+			Err(CommandOrError::Error(e))
+		},
 	}
 }

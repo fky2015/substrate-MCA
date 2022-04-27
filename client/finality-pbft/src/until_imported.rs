@@ -6,10 +6,10 @@
 
 use super::{
 	BlockStatus as BlockStatusT, BlockSyncRequester as BlockSyncRequesterT, Error,
-	GlobalCommunication, SignedMessage,
+	GlobalCommunicationIn, SignedMessage,
 };
 
-use finality_grandpa::leader;
+use finality_grandpa::leader::voter;
 use futures::{
 	prelude::*,
 	stream::{Fuse, StreamExt},
@@ -315,7 +315,7 @@ where
 			if let Some(metrics) = &mut this.metrics {
 				metrics.waiting_messages_dec();
 			}
-			return Poll::Ready(Some(Ok(ready)))
+			return Poll::Ready(Some(Ok(ready)));
 		}
 
 		if this.import_notifications.is_done() && this.incoming_messages.is_done() {
@@ -343,7 +343,7 @@ impl<Block: BlockT> BlockUntilImported<Block> for SignedMessage<Block> {
 		msg: Self::Blocked,
 		status_check: &BlockStatus,
 	) -> Result<DiscardWaitOrReady<Block, Self, Self::Blocked>, Error> {
-        return Ok(DiscardWaitOrReady::Ready(msg))
+		return Ok(DiscardWaitOrReady::Ready(msg));
 		// let (&target_hash, target_number) = msg.target();
 		//
 		// if let Some(number) = status_check.block_number(target_hash)? {
@@ -359,7 +359,7 @@ impl<Block: BlockT> BlockUntilImported<Block> for SignedMessage<Block> {
 	}
 
 	fn wait_completed(self, canon_number: NumberFor<Block>) -> Option<Self::Blocked> {
-        Some(self)
+		Some(self)
 		// let (&target_hash, target_number) = self.target();
 		// if canon_number != target_number {
 		// 	warn_authority_wrong_target(target_hash, self.id);
@@ -386,14 +386,14 @@ pub(crate) type UntilVoteTargetImported<Block, BlockStatus, BlockSyncRequester, 
 /// are waiting on for the same message (i.e. other `BlockGlobalMessage` instances with the same
 /// `inner`).
 pub(crate) struct BlockGlobalMessage<Block: BlockT> {
-	inner: Arc<Mutex<Option<GlobalCommunication>>>,
+	inner: Arc<Mutex<Option<GlobalCommunicationIn<Block>>>>,
 	target_number: NumberFor<Block>,
 }
 
 impl<Block: BlockT> Unpin for BlockGlobalMessage<Block> {}
 
 impl<Block: BlockT> BlockUntilImported<Block> for BlockGlobalMessage<Block> {
-	type Blocked = GlobalCommunication;
+	type Blocked = GlobalCommunicationIn<Block>;
 
 	fn needs_waiting<BlockStatus: BlockStatusT<Block>>(
 		input: Self::Blocked,
@@ -438,15 +438,44 @@ impl<Block: BlockT> BlockUntilImported<Block> for BlockGlobalMessage<Block> {
 					// invalid global message: messages targeting wrong number
 					// or at least different from other vote in same global
 					// message.
-					return Ok(false)
+					return Ok(false);
 				}
 
 				Ok(true)
 			};
 
 			match input {
-				leader::GlobalMessage::Empty => {},
-				leader::GlobalMessage::ViewChange { new_view, id } => {},
+				voter::GlobalMessageIn::Commit(_, ref commit, ..) => {
+					// add known hashes from all precommits.
+					let commit_targets =
+						commit.commits.iter().map(|c| (c.target_number, c.target_hash));
+
+					for (target_number, target_hash) in commit_targets {
+						if !query_known(target_hash, target_number)? {
+							return Ok(DiscardWaitOrReady::Discard);
+						}
+					}
+				},
+				voter::GlobalMessageIn::CatchUp(ref catch_up, ..) => {
+					// add known hashes from all prevotes and precommits.
+					let prepare_targets = catch_up
+						.prepares
+						.iter()
+						.map(|s| (s.prepare.target_number, s.prepare.target_hash));
+
+					let commit_targets = catch_up
+						.commits
+						.iter()
+						.map(|s| (s.commit.target_number, s.commit.target_hash));
+
+					let targets = prepare_targets.chain(commit_targets);
+
+					for (target_number, target_hash) in targets {
+						if !query_known(target_hash, target_number)? {
+							return Ok(DiscardWaitOrReady::Discard);
+						}
+					}
+				},
 			};
 		}
 
@@ -461,7 +490,7 @@ impl<Block: BlockT> BlockUntilImported<Block> for BlockGlobalMessage<Block> {
 		if unknown_hashes.is_empty() {
 			// none of the hashes in the global message were unknown.
 			// we can just return the message directly.
-			return Ok(DiscardWaitOrReady::Ready(input))
+			return Ok(DiscardWaitOrReady::Ready(input));
 		}
 
 		let locked_global = Arc::new(Mutex::new(Some(input)));
@@ -488,7 +517,7 @@ impl<Block: BlockT> BlockUntilImported<Block> for BlockGlobalMessage<Block> {
 			// Delete the inner message so it won't ever be forwarded. Future calls to
 			// `wait_completed` on the same `inner` will ignore it.
 			*self.inner.lock() = None;
-			return None
+			return None;
 		}
 
 		match Arc::try_unwrap(self.inner) {
@@ -598,9 +627,9 @@ mod tests {
 	}
 
 	fn message_all_dependencies_satisfied<F>(
-		msg: GlobalCommunication,
+		msg: GlobalCommunicationIn<Block>,
 		enact_dependencies: F,
-	) -> GlobalCommunication
+	) -> GlobalCommunicationIn<Block>
 	where
 		F: FnOnce(&TestChainState),
 	{
@@ -629,9 +658,9 @@ mod tests {
 	}
 
 	fn blocking_message_on_dependencies<F>(
-		msg: GlobalCommunication,
+		msg: GlobalCommunicationIn<Block>,
 		enact_dependencies: F,
-	) -> GlobalCommunication
+	) -> GlobalCommunicationIn<Block>
 	where
 		F: FnOnce(&TestChainState),
 	{
@@ -897,20 +926,20 @@ mod tests {
 	}
 
 	// fn test_catch_up() -> Arc<Mutex<Option<GlobalCommunication>>> {
-		// let header = make_header(5);
+	// let header = make_header(5);
 
-		// let unknown_catch_up = finality_pbft::CatchUp {
-		// 	round_number: 1,
-		// 	precommits: vec![],
-		// 	prevotes: vec![],
-		// 	base_hash: header.hash(),
-		// 	base_number: *header.number(),
-		// };
-		//
-		// let catch_up =
-		// 	voter::CommunicationIn::CatchUp(unknown_catch_up.clone(), voter::Callback::Blank);
-		//
-		// Arc::new(Mutex::new(Some(catch_up)))
+	// let unknown_catch_up = finality_pbft::CatchUp {
+	// 	round_number: 1,
+	// 	precommits: vec![],
+	// 	prevotes: vec![],
+	// 	base_hash: header.hash(),
+	// 	base_number: *header.number(),
+	// };
+	//
+	// let catch_up =
+	// 	voter::CommunicationIn::CatchUp(unknown_catch_up.clone(), voter::Callback::Blank);
+	//
+	// Arc::new(Mutex::new(Some(catch_up)))
 	// }
 
 	#[test]

@@ -9,6 +9,8 @@ use sc_consensus::shared_data::{SharedData, SharedDataLocked};
 use sc_telemetry::{telemetry, TelemetryHandle, CONSENSUS_INFO};
 use sp_finality_pbft::{AuthorityId, AuthorityList};
 
+use crate::SetId;
+
 /// Error type returned on operations on the `AuthoritySet`.
 #[derive(Debug, thiserror::Error)]
 pub enum Error<N, E> {
@@ -82,7 +84,7 @@ where
 
 	/// Get the current authorities and their weights (for the current set ID).
 	pub fn current_authorities(&self) -> VoterSet<AuthorityId> {
-		VoterSet::new(self.inner().current_authorities.iter().cloned()).expect(
+		VoterSet::new(self.inner().current_authorities).expect(
 			"current_authorities is non-empty and weights are non-zero; \
 			 constructor and all mutating operations on `AuthoritySet` ensure this; \
 			 qed.",
@@ -100,11 +102,11 @@ where
 	}
 }
 
-/// Tracks historical authority set changes. We store the block numbers for the last block
-/// of each authority set, once they have been finalized. These blocks are guaranteed to
-/// have a justification unless they were triggered by a forced change.
-#[derive(Debug, Encode, Decode, Clone, PartialEq)]
-pub struct AuthoritySetChanges<N>(Vec<(u64, N)>);
+impl<H, N> From<AuthoritySet<H, N>> for SharedAuthoritySet<H, N> {
+	fn from(set: AuthoritySet<H, N>) -> Self {
+		SharedAuthoritySet { inner: SharedData::new(set) }
+	}
+}
 
 /// Status of the set after changes were applied.
 #[derive(Debug)]
@@ -149,7 +151,7 @@ where
 {
 	// authority sets must be non-empty and all weights must be greater than 0
 	fn invalid_authority_list(authorities: &AuthorityList) -> bool {
-		authorities.is_empty() || authorities.iter().any(|(_, w)| *w == 0)
+		authorities.is_empty()
 	}
 
 	/// Get a genesis set with given authorities.
@@ -189,7 +191,7 @@ where
 	}
 
 	/// Get the current set id and a reference to the current authority set.
-	pub(crate) fn current(&self) -> (u64, &[(AuthorityId, u64)]) {
+	pub(crate) fn current(&self) -> (u64, &[AuthorityId]) {
 		(self.set_id, &self.current_authorities[..])
 	}
 }
@@ -597,4 +599,126 @@ pub struct PendingChange<H, N> {
 	pub(crate) canon_hash: H,
 	/// The delay kind.
 	pub(crate) delay_kind: DelayKind<N>,
+}
+
+impl<H: Decode, N: Decode> Decode for PendingChange<H, N> {
+	fn decode<I: parity_scale_codec::Input>(
+		value: &mut I,
+	) -> Result<Self, parity_scale_codec::Error> {
+		let next_authorities = Decode::decode(value)?;
+		let delay = Decode::decode(value)?;
+		let canon_height = Decode::decode(value)?;
+		let canon_hash = Decode::decode(value)?;
+
+		let delay_kind = DelayKind::decode(value).unwrap_or(DelayKind::Finalized);
+
+		Ok(PendingChange { next_authorities, delay, canon_height, canon_hash, delay_kind })
+	}
+}
+
+impl<H, N: Add<Output = N> + Clone> PendingChange<H, N> {
+	/// Returns the effective number this change will be applied at.
+	pub fn effective_number(&self) -> N {
+		self.canon_height.clone() + self.delay.clone()
+	}
+}
+
+/// The response when querying for a set id for a specific block. Either we get a set id
+/// together with a block number for the last block in the set, or that the requested block is in
+/// the latest set, or that we don't know what set id the given block belongs to.
+#[derive(Debug, PartialEq)]
+pub enum AuthoritySetChangeId<N> {
+	/// The requested block is in the latest set.
+	Latest,
+	/// Tuple containing the set id and the last block number of that set.
+	Set(SetId, N),
+	/// We don't know which set id the request block belongs to (this can only happen due to
+	/// missing data).
+	Unknown,
+}
+
+/// Tracks historical authority set changes. We store the block numbers for the last block
+/// of each authority set, once they have been finalized. These blocks are guaranteed to
+/// have a justification unless they were triggered by a forced change.
+#[derive(Debug, Encode, Decode, Clone, PartialEq)]
+pub struct AuthoritySetChanges<N>(Vec<(u64, N)>);
+
+impl<N> From<Vec<(u64, N)>> for AuthoritySetChanges<N> {
+	fn from(changes: Vec<(u64, N)>) -> AuthoritySetChanges<N> {
+		AuthoritySetChanges(changes)
+	}
+}
+
+impl<N: Ord + Clone> AuthoritySetChanges<N> {
+	pub(crate) fn empty() -> Self {
+		Self(Default::default())
+	}
+
+	pub(crate) fn append(&mut self, set_id: u64, block_number: N) {
+		self.0.push((set_id, block_number));
+	}
+
+	pub(crate) fn get_set_id(&self, block_number: N) -> AuthoritySetChangeId<N> {
+		if self
+			.0
+			.last()
+			.map(|last_auth_change| last_auth_change.1 < block_number)
+			.unwrap_or(false)
+		{
+			return AuthoritySetChangeId::Latest;
+		}
+
+		let idx = self
+			.0
+			.binary_search_by_key(&block_number, |(_, n)| n.clone())
+			.unwrap_or_else(|b| b);
+
+		if idx < self.0.len() {
+			let (set_id, block_number) = self.0[idx].clone();
+
+			// if this is the first index but not the first set id then we are missing data.
+			if idx == 0 && set_id != 0 {
+				return AuthoritySetChangeId::Unknown;
+			}
+
+			AuthoritySetChangeId::Set(set_id, block_number)
+		} else {
+			AuthoritySetChangeId::Unknown
+		}
+	}
+
+	pub(crate) fn insert(&mut self, block_number: N) {
+		let idx = self
+			.0
+			.binary_search_by_key(&block_number, |(_, n)| n.clone())
+			.unwrap_or_else(|b| b);
+
+		let set_id = if idx == 0 { 0 } else { self.0[idx - 1].0 + 1 };
+		assert!(idx == self.0.len() || self.0[idx].0 != set_id);
+		self.0.insert(idx, (set_id, block_number));
+	}
+
+	/// Returns an iterator over all historical authority set changes starting at the given block
+	/// number (excluded). The iterator yields a tuple representing the set id and the block number
+	/// of the last block in that set.
+	pub fn iter_from(&self, block_number: N) -> Option<impl Iterator<Item = &(u64, N)>> {
+		let idx = self
+			.0
+			.binary_search_by_key(&block_number, |(_, n)| n.clone())
+			// if there was a change at the given block number then we should start on the next
+			// index since we want to exclude the current block number
+			.map(|n| n + 1)
+			.unwrap_or_else(|b| b);
+
+		if idx < self.0.len() {
+			let (set_id, _) = self.0[idx].clone();
+
+			// if this is the first index but not the first set id then we are missing data.
+			if idx == 0 && set_id != 0 {
+				return None;
+			}
+		}
+
+		Some(self.0[idx..].iter())
+	}
 }

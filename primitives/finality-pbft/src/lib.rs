@@ -57,15 +57,95 @@ pub type ViewNumber = u64;
 /// A list of Grandpa authorities with associated weights.
 pub type AuthorityList = Vec<AuthorityId>;
 
-// TODO: A scheduled change of authority set.
-// #[cfg_attr(feature = "std", derive(Serialize))]
-// #[derive(Clone, Eq, PartialEq, Encode, Decode, RuntimeDebug)]
-// pub struct ScheduledChange<N> {
-// 	/// The new authorities after the change, along with their respective weights.
-// 	pub next_authorities: AuthorityList,
-// 	/// The number of blocks to delay.
-// 	pub delay: N,
-// }
+#[cfg_attr(feature = "std", derive(Serialize))]
+#[derive(Clone, Eq, PartialEq, Encode, Decode, RuntimeDebug)]
+pub struct ScheduledChange<N> {
+	/// The new authorities after the change, along with their respective weights.
+	pub next_authorities: AuthorityList,
+	/// The number of blocks to delay.
+	pub delay: N,
+}
+
+/// An consensus log item for GRANDPA.
+#[cfg_attr(feature = "std", derive(Serialize))]
+#[derive(Decode, Encode, PartialEq, Eq, Clone, RuntimeDebug)]
+pub enum ConsensusLog<N: Codec> {
+	/// Schedule an authority set change.
+	///
+	/// The earliest digest of this type in a single block will be respected,
+	/// provided that there is no `ForcedChange` digest. If there is, then the
+	/// `ForcedChange` will take precedence.
+	///
+	/// No change should be scheduled if one is already and the delay has not
+	/// passed completely.
+	///
+	/// This should be a pure function: i.e. as long as the runtime can interpret
+	/// the digest type it should return the same result regardless of the current
+	/// state.
+	#[codec(index = 1)]
+	ScheduledChange(ScheduledChange<N>),
+	/// Force an authority set change.
+	///
+	/// Forced changes are applied after a delay of _imported_ blocks,
+	/// while pending changes are applied after a delay of _finalized_ blocks.
+	///
+	/// The earliest digest of this type in a single block will be respected,
+	/// with others ignored.
+	///
+	/// No change should be scheduled if one is already and the delay has not
+	/// passed completely.
+	///
+	/// This should be a pure function: i.e. as long as the runtime can interpret
+	/// the digest type it should return the same result regardless of the current
+	/// state.
+	#[codec(index = 2)]
+	ForcedChange(N, ScheduledChange<N>),
+	/// Note that the authority with given index is disabled until the next change.
+	#[codec(index = 3)]
+	OnDisabled(AuthorityIndex),
+	/// A signal to pause the current authority set after the given delay.
+	/// After finalizing the block at _delay_ the authorities should stop voting.
+	#[codec(index = 4)]
+	Pause(N),
+	/// A signal to resume the current authority set after the given delay.
+	/// After authoring the block at _delay_ the authorities should resume voting.
+	#[codec(index = 5)]
+	Resume(N),
+}
+
+impl<N: Codec> ConsensusLog<N> {
+	/// Try to cast the log entry as a contained signal.
+	pub fn try_into_change(self) -> Option<ScheduledChange<N>> {
+		match self {
+			ConsensusLog::ScheduledChange(change) => Some(change),
+			_ => None,
+		}
+	}
+
+	/// Try to cast the log entry as a contained forced signal.
+	pub fn try_into_forced_change(self) -> Option<(N, ScheduledChange<N>)> {
+		match self {
+			ConsensusLog::ForcedChange(median, change) => Some((median, change)),
+			_ => None,
+		}
+	}
+
+	/// Try to cast the log entry as a contained pause signal.
+	pub fn try_into_pause(self) -> Option<N> {
+		match self {
+			ConsensusLog::Pause(delay) => Some(delay),
+			_ => None,
+		}
+	}
+
+	/// Try to cast the log entry as a contained resume signal.
+	pub fn try_into_resume(self) -> Option<N> {
+		match self {
+			ConsensusLog::Resume(delay) => Some(delay),
+			_ => None,
+		}
+	}
+}
 
 /// Encode round message localized to a given round and set id.
 pub fn localized_payload<E: Encode>(view: u64, set_id: SetId, message: &E) -> Vec<u8> {
