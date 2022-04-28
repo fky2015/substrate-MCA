@@ -144,8 +144,8 @@ fn testnet_genesis(
 		aura: AuraConfig {
 			authorities: initial_authorities.iter().map(|x| (x.0.clone())).collect(),
 		},
-		grandpa: PbftConfig {
-			authorities: initial_authorities.iter().map(|x| (x.1.clone(), 1)).collect(),
+		pbft: PbftConfig {
+			authorities: initial_authorities.iter().map(|x| (x.1.clone())).collect(),
 		},
 		sudo: SudoConfig {
 			// Assign network admin rights.

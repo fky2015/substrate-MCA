@@ -6,7 +6,7 @@
 #[cfg(feature = "std")]
 include!(concat!(env!("OUT_DIR"), "/wasm_binary.rs"));
 
-use pallet_pbft::{fg_primitives, AuthorityId as Pbft, AuthorityList as GrandpaAuthorityList};
+use pallet_pbft::{fp_primitives, AuthorityId as PbftId, AuthorityList as PbftAuthorityList};
 use sp_api::impl_runtime_apis;
 use sp_consensus_aura::sr25519::AuthorityId as AuraId;
 use sp_core::{crypto::KeyTypeId, OpaqueMetadata};
@@ -82,7 +82,7 @@ pub mod opaque {
 	impl_opaque_keys! {
 		pub struct SessionKeys {
 			pub aura: Aura,
-			pub grandpa: Grandpa,
+			pub pbft: Pbft,
 		}
 	}
 }
@@ -204,23 +204,23 @@ impl pallet_aura::Config for Runtime {
 	type MaxAuthorities = ConstU32<32>;
 }
 
-impl pallet_grandpa::Config for Runtime {
-	type Event = Event;
-	type Call = Call;
-
-	type KeyOwnerProofSystem = ();
-
-	type KeyOwnerProof =
-		<Self::KeyOwnerProofSystem as KeyOwnerProofSystem<(KeyTypeId, GrandpaId)>>::Proof;
-
-	type KeyOwnerIdentification = <Self::KeyOwnerProofSystem as KeyOwnerProofSystem<(
-		KeyTypeId,
-		GrandpaId,
-	)>>::IdentificationTuple;
-
-	type HandleEquivocation = ();
-
-	type WeightInfo = ();
+impl pallet_pbft::Config for Runtime {
+	// type Event = Event;
+	// type Call = Call;
+	//
+	// type KeyOwnerProofSystem = ();
+	//
+	// type KeyOwnerProof =
+	// 	<Self::KeyOwnerProofSystem as KeyOwnerProofSystem<(KeyTypeId, PbftId)>>::Proof;
+	//
+	// type KeyOwnerIdentification = <Self::KeyOwnerProofSystem as KeyOwnerProofSystem<(
+	// 	KeyTypeId,
+	// 	PbftId,
+	// )>>::IdentificationTuple;
+	//
+	// type HandleEquivocation = ();
+	//
+	// type WeightInfo = ();
 	type MaxAuthorities = ConstU32<32>;
 }
 
@@ -275,7 +275,7 @@ construct_runtime!(
 		RandomnessCollectiveFlip: pallet_randomness_collective_flip,
 		Timestamp: pallet_timestamp,
 		Aura: pallet_aura,
-		Grandpa: pallet_grandpa,
+		Pbft: pallet_pbft,
 		Balances: pallet_balances,
 		TransactionPayment: pallet_transaction_payment,
 		Sudo: pallet_sudo,
@@ -409,33 +409,13 @@ impl_runtime_apis! {
 		}
 	}
 
-	impl fg_primitives::GrandpaApi<Block> for Runtime {
-		fn grandpa_authorities() -> GrandpaAuthorityList {
-			Grandpa::grandpa_authorities()
+	impl fp_primitives::PbftApi<Block> for Runtime {
+		fn pbft_authorities() -> PbftAuthorityList {
+			Pbft::pbft_authorities()
 		}
 
-		fn current_set_id() -> fg_primitives::SetId {
-			Grandpa::current_set_id()
-		}
-
-		fn submit_report_equivocation_unsigned_extrinsic(
-			_equivocation_proof: fg_primitives::EquivocationProof<
-				<Block as BlockT>::Hash,
-				NumberFor<Block>,
-			>,
-			_key_owner_proof: fg_primitives::OpaqueKeyOwnershipProof,
-		) -> Option<()> {
-			None
-		}
-
-		fn generate_key_ownership_proof(
-			_set_id: fg_primitives::SetId,
-			_authority_id: GrandpaId,
-		) -> Option<fg_primitives::OpaqueKeyOwnershipProof> {
-			// NOTE: this is the only implementation possible since we've
-			// defined our key owner proof type as a bottom type (i.e. a type
-			// with no values).
-			None
+		fn current_set_id() -> fp_primitives::SetId {
+			Pbft::current_set_id()
 		}
 	}
 

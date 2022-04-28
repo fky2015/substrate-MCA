@@ -10,9 +10,8 @@ use finality_grandpa::{
 	leader::{self, voter, Error as PbftError, VoterSet},
 	BlockNumberOps,
 };
-use futures::{future, Future, Sink, SinkExt, Stream, TryStreamExt};
-use import::PbftBlockImport;
-use log::{debug, info};
+use futures::{future, prelude::*, Future, Sink, SinkExt, Stream, StreamExt, TryStreamExt};
+use log::{debug, error, info};
 use parity_scale_codec::Decode;
 use parking_lot::RwLock;
 use prometheus_endpoint::{PrometheusError, Registry};
@@ -34,6 +33,11 @@ use sp_runtime::{
 };
 
 use sp_runtime::RuntimeAppPublic;
+
+use std::{
+	fmt, io,
+	task::{Context, Poll},
+};
 
 // utility logging macro that takes as first argument a conditional to
 // decide whether to log under debug or info level (useful to restrict
@@ -61,8 +65,9 @@ pub(crate) mod justification;
 pub(crate) mod notification;
 pub(crate) mod until_imported;
 
-pub use notification::{PbftJustificationSender, PbftJustificationStream};
 pub use communication::pbft_protocol_name::standard_name as protocol_standard_name;
+pub use import::PbftBlockImport;
+pub use notification::{PbftJustificationSender, PbftJustificationStream};
 use until_imported::UntilGlobalMessageBlocksImported;
 
 /// A PBFT message for a substrate chain.
@@ -177,6 +182,8 @@ pub struct LinkHalf<Block: BlockT, C, SC> {
 	select_chain: SC,
 	persistent_data: PersistentData<Block>,
 	voter_commands_rx: TracingUnboundedReceiver<VoterCommand<Block::Hash, NumberFor<Block>>>,
+	justification_sender: PbftJustificationSender<Block>,
+	justification_stream: PbftJustificationStream<Block>,
 	telemetry: Option<TelemetryHandle>,
 }
 
@@ -332,7 +339,15 @@ where
 			justification_sender.clone(),
 			telemetry.clone(),
 		),
-		LinkHalf { client, select_chain, persistent_data, voter_commands_rx, telemetry },
+		LinkHalf {
+			client,
+			select_chain,
+			persistent_data,
+			voter_commands_rx,
+			justification_sender,
+			justification_stream,
+			telemetry,
+		},
 	))
 }
 
@@ -621,6 +636,206 @@ where
 	}
 }
 
+impl<B, Block, C, N, SC> Future for VoterWork<B, Block, C, N, SC>
+where
+	Block: BlockT,
+	B: Backend<Block> + 'static,
+	N: NetworkT<Block> + Sync,
+	NumberFor<Block>: BlockNumberOps,
+	SC: SelectChain<Block> + 'static,
+	C: ClientForPbft<Block, B> + 'static,
+	C::Api: PbftApi<Block>,
+{
+	type Output = Result<(), Error>;
+
+	fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+		match Future::poll(Pin::new(&mut self.voter), cx) {
+			Poll::Pending => {},
+			Poll::Ready(Ok(())) => {
+				// voters don't conclude naturally
+				return Poll::Ready(Err(Error::Safety(
+					"finality-grandpa inner voter has concluded.".into(),
+				)));
+			},
+			Poll::Ready(Err(CommandOrError::Error(e))) => {
+				// return inner observer error
+				return Poll::Ready(Err(e));
+			},
+			Poll::Ready(Err(CommandOrError::VoterCommand(command))) => {
+				// some command issued internally
+				self.handle_voter_command(command)?;
+				cx.waker().wake_by_ref();
+			},
+		}
+
+		match Stream::poll_next(Pin::new(&mut self.voter_commands_rx), cx) {
+			Poll::Pending => {},
+			Poll::Ready(None) => {
+				// the `voter_commands_rx` stream should never conclude since it's never closed.
+				return Poll::Ready(Err(Error::Safety("`voter_commands_rx` was closed.".into())));
+			},
+			Poll::Ready(Some(command)) => {
+				// some command issued externally
+				self.handle_voter_command(command)?;
+				cx.waker().wake_by_ref();
+			},
+		}
+
+		Future::poll(Pin::new(&mut self.network), cx)
+	}
+}
+/// Parameters used to run Grandpa.
+pub struct PbftParams<Block: BlockT, C, N, SC> {
+	/// Configuration for the GRANDPA service.
+	pub config: Config,
+	/// A link to the block import worker.
+	pub link: LinkHalf<Block, C, SC>,
+	/// The Network instance.
+	///
+	/// It is assumed that this network will feed us Grandpa notifications. When using the
+	/// `sc_network` crate, it is assumed that the Grandpa notifications protocol has been passed
+	/// to the configuration of the networking. See [`grandpa_peers_set_config`].
+	pub network: N,
+	/// A voting rule used to potentially restrict target votes.
+	// pub voting_rule: VR,
+	/// The prometheus metrics registry.
+	pub prometheus_registry: Option<prometheus_endpoint::Registry>,
+	/// The voter state is exposed at an RPC endpoint.
+	pub shared_voter_state: SharedVoterState<Block>,
+	/// TelemetryHandle instance.
+	pub telemetry: Option<TelemetryHandle>,
+}
+
+/// Returns the configuration value to put in
+/// [`sc_network::config::NetworkConfiguration::extra_sets`].
+/// For standard protocol name see [`crate::protocol_standard_name`].
+pub fn pbft_peers_set_config(
+	protocol_name: std::borrow::Cow<'static, str>,
+) -> sc_network::config::NonDefaultSetConfig {
+	sc_network::config::NonDefaultSetConfig {
+		notifications_protocol: protocol_name,
+		fallback_names: Vec::new(),
+		// Notifications reach ~256kiB in size at the time of writing on Kusama and Polkadot.
+		max_notification_size: 1024 * 1024,
+		set_config: sc_network::config::SetConfig {
+			in_peers: 0,
+			out_peers: 0,
+			reserved_nodes: Vec::new(),
+			non_reserved_mode: sc_network::config::NonReservedPeerMode::Deny,
+		},
+	}
+}
+
+/// Run a GRANDPA voter as a task. Provide configuration and a link to a
+/// block import worker that has already been instantiated with `block_import`.
+pub fn run_pbft_voter<Block: BlockT, BE: 'static, C, N, SC>(
+	pbft_params: PbftParams<Block, C, N, SC>,
+) -> sp_blockchain::Result<impl Future<Output = ()> + Send>
+where
+	Block::Hash: Ord,
+	BE: Backend<Block> + 'static,
+	N: NetworkT<Block> + Sync + 'static,
+	SC: SelectChain<Block> + 'static,
+	// VR: VotingRule<Block, C> + Clone + 'static,
+	NumberFor<Block>: BlockNumberOps,
+	C: ClientForPbft<Block, BE> + 'static,
+	C::Api: PbftApi<Block>,
+{
+	let PbftParams {
+		mut config,
+		link,
+		network,
+		prometheus_registry,
+		shared_voter_state,
+		telemetry,
+	} = pbft_params;
+
+	// NOTE: we have recently removed `run_pbft_observer` from the public
+	// API, I felt it is easier to just ignore this field rather than removing
+	// it from the config temporarily. This should be removed after #5013 is
+	// fixed and we re-add the observer to the public API.
+	config.observer_enabled = false;
+
+	let LinkHalf {
+		client,
+		select_chain,
+		persistent_data,
+		voter_commands_rx,
+		justification_sender,
+		justification_stream: _,
+		telemetry: _,
+	} = link;
+
+	let network = NetworkBridge::new(
+		network,
+		config.clone(),
+		persistent_data.set_state.clone(),
+		prometheus_registry.as_ref(),
+		telemetry.clone(),
+	);
+
+	let conf = config.clone();
+	let telemetry_task =
+		if let Some(telemetry_on_connect) = telemetry.as_ref().map(|x| x.on_connect_stream()) {
+			let authorities = persistent_data.authority_set.clone();
+			let telemetry = telemetry.clone();
+			let events = telemetry_on_connect.for_each(move |_| {
+				let current_authorities = authorities.current_authorities();
+				let set_id = authorities.set_id();
+				let maybe_authority_id =
+					local_authority_id(&current_authorities, conf.keystore.as_ref());
+
+				let authorities =
+					current_authorities.iter().map(|id| id.to_string()).collect::<Vec<_>>();
+
+				let authorities = serde_json::to_string(&authorities).expect(
+					"authorities is always at least an empty vector; \
+					 elements are always of type string",
+				);
+
+				telemetry!(
+					telemetry;
+					CONSENSUS_INFO;
+					"afg.authority_set";
+					"authority_id" => maybe_authority_id.map_or("".into(), |s| s.to_string()),
+					"authority_set_id" => ?set_id,
+					"authorities" => authorities,
+				);
+
+				future::ready(())
+			});
+			future::Either::Left(events)
+		} else {
+			future::Either::Right(future::pending())
+		};
+
+	let voter_work = VoterWork::new(
+		client,
+		config,
+		network,
+		select_chain,
+		// voting_rule,
+		persistent_data,
+		voter_commands_rx,
+		prometheus_registry,
+		shared_voter_state,
+		justification_sender,
+		telemetry,
+	);
+
+	let voter_work = voter_work.map(|res| match res {
+		Ok(()) => error!(target: "afg",
+			"GRANDPA voter future has concluded naturally, this should be unreachable."
+		),
+		Err(e) => error!(target: "afg", "GRANDPA voter error: {}", e),
+	});
+
+	// Make sure that `telemetry_task` doesn't accidentally finish and kill pbft.
+	let telemetry_task = telemetry_task.then(|_| future::pending::<()>());
+
+	Ok(future::select(voter_work, telemetry_task).map(drop))
+}
+
 /// A trait that includes all the client functionalities grandpa requires.
 /// Ideally this would be a trait alias, we're not there yet.
 /// tracking issue <https://github.com/rust-lang/rust/issues/41517>
@@ -750,7 +965,6 @@ impl<H, N> From<VoterCommand<H, N>> for CommandOrError<H, N> {
 	}
 }
 
-use std::fmt;
 impl<H: fmt::Debug, N: fmt::Debug> ::std::error::Error for CommandOrError<H, N> {}
 
 impl<H, N> fmt::Display for CommandOrError<H, N> {

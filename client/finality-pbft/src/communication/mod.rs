@@ -14,7 +14,7 @@ use log::{debug, trace};
 use parity_scale_codec::{Decode, Encode};
 use parking_lot::Mutex;
 use prometheus_endpoint::Registry;
-use sc_network::ReputationChange;
+use sc_network::{NetworkService, ReputationChange};
 use sc_network_gossip::{GossipEngine, Network as GossipNetwork};
 use sc_telemetry::{telemetry, TelemetryHandle, CONSENSUS_DEBUG, CONSENSUS_INFO};
 use sc_utils::mpsc::TracingUnboundedReceiver;
@@ -134,6 +134,21 @@ pub trait Network<Block: BlockT>: GossipNetwork<Block> + Clone + Send + 'static 
 		hash: Block::Hash,
 		number: NumberFor<Block>,
 	);
+}
+
+impl<B, H> Network<B> for Arc<NetworkService<B, H>>
+where
+	B: BlockT,
+	H: sc_network::ExHashT,
+{
+	fn set_sync_fork_request(
+		&self,
+		peers: Vec<sc_network::PeerId>,
+		hash: B::Hash,
+		number: NumberFor<B>,
+	) {
+		NetworkService::set_sync_fork_request(self, peers, hash, number)
+	}
 }
 
 /// Create a unique topic for a view and set-id combo.
@@ -403,7 +418,9 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 			// FIXME:: send GlobalMessageOut
 			match out {
 				leader::voter::GlobalMessageOut::Commit(view, commit) => future::ok((view, commit)),
-				_ => future::err(Error::Network("global outgoing have wring message type [NEED IMPLEMENT]".to_string())),
+				_ => future::err(Error::Network(
+					"global outgoing have wring message type [NEED IMPLEMENT]".to_string(),
+				)),
 			}
 
 			// let voter::GlobalMessageOut::Commit(view, commit) = out;

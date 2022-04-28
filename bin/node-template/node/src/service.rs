@@ -46,22 +46,15 @@ pub fn new_partial(
 		sc_consensus::DefaultImportQueue<Block, FullClient>,
 		sc_transaction_pool::FullPool<Block, FullClient>,
 		(
-			sc_finality_pbft::PbftBlockImport<FullBackend, Block, FullClient>,
-			// sc_finality_pbft::GrandpaBlockImport<
-			// 	FullBackend,
-			// 	Block,
-			// 	FullClient,
-			// 	FullSelectChain,
-			// >,
-			sc_finality_pbft::LinkHalf<Block, FullClient>,
-			// sc_finality_pbft::LinkHalf<Block, FullClient, FullSelectChain>,
+			sc_finality_pbft::PbftBlockImport<FullBackend, Block, FullClient, FullSelectChain>,
+			sc_finality_pbft::LinkHalf<Block, FullClient, FullSelectChain>,
 			Option<Telemetry>,
 		),
 	>,
 	ServiceError,
 > {
 	if config.keystore_remote.is_some() {
-		return Err(ServiceError::Other("Remote Keystores are not supported.".into()))
+		return Err(ServiceError::Other("Remote Keystores are not supported.".into()));
 	}
 
 	let telemetry = config
@@ -174,11 +167,12 @@ pub fn new_full(mut config: Configuration) -> Result<TaskManager, ServiceError> 
 	if let Some(url) = &config.keystore_remote {
 		match remote_keystore(url) {
 			Ok(k) => keystore_container.set_remote_keystore(k),
-			Err(e) =>
+			Err(e) => {
 				return Err(ServiceError::Other(format!(
 					"Error hooking up remote keystore for {}: {}",
 					url, e
-				))),
+				)))
+			},
 		};
 	}
 	let pbft_protocol_name = sc_finality_pbft::protocol_standard_name(
@@ -190,11 +184,11 @@ pub fn new_full(mut config: Configuration) -> Result<TaskManager, ServiceError> 
 		.network
 		.extra_sets
 		.push(sc_finality_pbft::pbft_peers_set_config(pbft_protocol_name.clone()));
-	let warp_sync = Arc::new(sc_finality_pbft::warp_proof::NetworkProvider::new(
-		backend.clone(),
-		pbft_link.shared_authority_set().clone(),
-		Vec::default(),
-	));
+	// let warp_sync = Arc::new(sc_finality_pbft::warp_proof::NetworkProvider::new(
+	// 	backend.clone(),
+	// 	pbft_link.shared_authority_set().clone(),
+	// 	Vec::default(),
+	// ));
 
 	let (network, system_rpc_tx, network_starter) =
 		sc_service::build_network(sc_service::BuildNetworkParams {
@@ -204,7 +198,7 @@ pub fn new_full(mut config: Configuration) -> Result<TaskManager, ServiceError> 
 			spawn_handle: task_manager.spawn_handle(),
 			import_queue,
 			block_announce_validator_builder: None,
-			warp_sync: Some(warp_sync),
+			warp_sync: None// Some(warp_sync),
 		})?;
 
 	if config.offchain_worker.enabled {
@@ -306,7 +300,9 @@ pub fn new_full(mut config: Configuration) -> Result<TaskManager, ServiceError> 
 	let pbft_config = sc_finality_pbft::Config {
 		// FIXME #1578 make this available through chainspec
 		gossip_duration: Duration::from_millis(333),
+		justification_period: 512,
 		local_role: role,
+		observer_enabled: false,
 		name: Some(name),
 		keystore,
 		telemetry: telemetry.as_ref().map(|x| x.handle()),
@@ -320,11 +316,10 @@ pub fn new_full(mut config: Configuration) -> Result<TaskManager, ServiceError> 
 		// and vote data availability than the observer. The observer has not
 		// been tested extensively yet and having most nodes in a network run it
 		// could lead to finality stalls.
-		let pbft_config = sc_finality_pbft::GrandpaParams {
+		let pbft_config = sc_finality_pbft::PbftParams {
 			config: pbft_config,
 			link: pbft_link,
 			network,
-			voting_rule: sc_finality_pbft::VotingRulesBuilder::default().build(),
 			prometheus_registry,
 			shared_voter_state: SharedVoterState::empty(),
 			telemetry: telemetry.as_ref().map(|x| x.handle()),

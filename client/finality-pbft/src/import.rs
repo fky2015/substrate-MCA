@@ -43,7 +43,6 @@ use crate::{
 ///
 /// When using PBFT, the block import worker should be using this block import
 /// object.
-#[derive(Clone)]
 pub struct PbftBlockImport<Backend, Block: BlockT, Client, SC> {
 	inner: Arc<Client>,
 	select_chain: SC,
@@ -53,6 +52,23 @@ pub struct PbftBlockImport<Backend, Block: BlockT, Client, SC> {
 	justification_sender: PbftJustificationSender<Block>,
 	telemetry: Option<TelemetryHandle>,
 	_phantom: PhantomData<Backend>,
+}
+
+impl<Backend, Block: BlockT, Client, SC: Clone> Clone
+	for PbftBlockImport<Backend, Block, Client, SC>
+{
+	fn clone(&self) -> Self {
+		PbftBlockImport {
+			inner: self.inner.clone(),
+			select_chain: self.select_chain.clone(),
+			authority_set: self.authority_set.clone(),
+			send_voter_commands: self.send_voter_commands.clone(),
+			authority_set_hard_forks: self.authority_set_hard_forks.clone(),
+			justification_sender: self.justification_sender.clone(),
+			telemetry: self.telemetry.clone(),
+			_phantom: self._phantom.clone(),
+		}
+	}
 }
 
 #[async_trait::async_trait]
@@ -442,10 +458,11 @@ where
 				// So we can read the authority list and set id from the state.
 				self.authority_set_hard_forks.clear();
 				let block_id = BlockId::hash(hash);
+				// NOTE: use runtime_api
 				let authorities = self
 					.inner
 					.runtime_api()
-					.grandpa_authorities(&block_id)
+					.pbft_authorities(&block_id)
 					.map_err(|e| ConsensusError::ClientImport(e.to_string()))?;
 				let set_id = self.current_set_id(&block_id)?;
 				let authority_set = AuthoritySet::new(
@@ -616,10 +633,10 @@ where
 			_ => {},
 		}
 
-		let grandpa_justification =
+		let pbft_justification =
 			justifications.and_then(|just| just.into_justification(PBFT_ENGINE_ID));
 
-		match grandpa_justification {
+		match pbft_justification {
 			Some(justification) => {
 				let import_res = self.import_justification(
 					hash,
