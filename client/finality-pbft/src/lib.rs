@@ -64,6 +64,7 @@ pub(crate) mod import;
 pub(crate) mod justification;
 pub(crate) mod notification;
 pub(crate) mod until_imported;
+// pub mod warp_proof;
 
 pub use communication::pbft_protocol_name::standard_name as protocol_standard_name;
 pub use import::PbftBlockImport;
@@ -206,13 +207,13 @@ where
 	E: CallExecutor<Block>,
 {
 	fn get(&self) -> Result<AuthorityList, ClientError> {
-		// This implementation uses the Grandpa runtime API instead of reading directly from the
+		// NOTE: This implementation uses the Grandpa runtime API instead of reading directly from the
 		// `GRANDPA_AUTHORITIES_KEY` as the data may have been migrated since the genesis block of
 		// the chain, whereas the runtime API is backwards compatible.
 		self.executor()
 			.call(
 				&BlockId::Number(Zero::zero()),
-				"GrandpaApi_grandpa_authorities",
+				"PbftApi_pbft_authorities",
 				&[],
 				ExecutionStrategy::NativeElseWasm,
 				None,

@@ -55,10 +55,21 @@ where
 {
 	let version: Option<u32> = load_decode(backend, VERSION_KEY)?;
 
-	let make_genesis_round = move || ViewState::genesis((genesis_hash, genesis_number));
+	let make_genesis_view = move || ViewState::genesis((genesis_hash, genesis_number));
 
 	match version {
-		Some(3) => {
+   //      None => {
+			//
+			// if let Some((new_set, set_state)) =
+			// 	migrate_from_version0::<Block, _, _>(backend, &make_genesis_round)?
+			// {
+			// 	return Ok(PersistentData {
+			// 		authority_set: new_set.into(),
+			// 		set_state: set_state.into(),
+			// 	})
+			// }
+   //      },
+		Some(3) | None => {
 			if let Some(set) = load_decode::<_, AuthoritySet<Block::Hash, NumberFor<Block>>>(
 				backend,
 				AUTHORITY_SET_KEY,
@@ -67,7 +78,7 @@ where
 					match load_decode::<_, VoterSetState<Block>>(backend, SET_STATE_KEY)? {
 						Some(state) => state,
 						None => {
-							let state = make_genesis_round();
+							let state = make_genesis_view();
 							let base = state.finalized
 							.expect("state is for completed round; completed rounds must have a prevote ghost; qed.");
 
@@ -101,7 +112,7 @@ where
 	let genesis_authorities = genesis_authorities()?;
 	let genesis_set = AuthoritySet::genesis(genesis_authorities)
 		.expect("genesis authorities is non-empty; all weights are non-zero; qed.");
-	let state = make_genesis_round();
+	let state = make_genesis_view();
 	let base = state
 		.finalized
 		.expect("state is for completed round; completed rounds must have a prevote ghost; qed.");
