@@ -1,4 +1,3 @@
-/// QUESTION: what's the difference between `voters` and `authority_set`?
 use std::{
 	collections::{BTreeMap, HashMap},
 	marker::PhantomData,
@@ -10,7 +9,9 @@ use crate::{
 	authorities::{AuthoritySet, SharedAuthoritySet},
 	communication::Network as NetworkT,
 	justification::PbftJustification,
+	local_authority_id,
 	notification::PbftJustificationSender,
+	until_imported::UntilVoteTargetImported,
 	ClientForPbft, CommandOrError, Commit, Config, Error, FinalizedCommit, NewAuthoritySet,
 	PrePrepare, Prepare, SignedMessage, VoterCommand,
 };
@@ -18,6 +19,7 @@ use finality_grandpa::{
 	leader::{self, Error as PbftError, State as ViewState, VoterSet},
 	BlockNumberOps,
 };
+use futures::prelude::*;
 use futures::{Future, Sink, Stream};
 use log::{debug, warn};
 use parity_scale_codec::{Decode, Encode};
@@ -91,6 +93,12 @@ where
 	NumberFor<Block>: BlockNumberOps,
 {
 	type Timer = Pin<Box<dyn Future<Output = Result<(), Self::Error>> + Send>>;
+	type BestChain = Pin<
+		Box<
+			dyn Future<Output = Result<Option<(NumberFor<Block>, Block::Hash)>, Self::Error>>
+				+ Send,
+		>,
+	>;
 
 	type Id = AuthorityId;
 
@@ -128,18 +136,91 @@ where
 	type Number = NumberFor<Block>;
 
 	fn voter_data(&self) -> leader::voter::communicate::VoterData<Self::Id> {
-		todo!()
+		let local_id = local_authority_id(&self.voters, self.config.keystore.as_ref())
+			.expect("expect to have local_id to be a validtor.");
+
+		leader::voter::communicate::VoterData { local_id }
 	}
 
 	fn round_data(
 		&self,
 		view: u64,
-	) -> leader::voter::communicate::RoundData<Self::Id, Self::Timer, Self::In, Self::Out> {
-		todo!()
+	) -> leader::voter::communicate::RoundData<Self::Id, Self::In, Self::Out> {
+		let local_id = local_authority_id(&self.voters, self.config.keystore.as_ref());
+
+		let has_voted = match self.voter_set_state.has_voted(view) {
+			HasVoted::Yes(id, vote) => {
+				if local_id.as_ref().map(|k| k == &id).unwrap_or(false) {
+					HasVoted::Yes(id, vote)
+				} else {
+					HasVoted::No
+				}
+			},
+			HasVoted::No => HasVoted::No,
+		};
+
+		// NOTE: we cache the local authority id that we'll be using to vote on the
+		// given round. this is done to make sure we only check for available keys
+		// from the keystore in this method when beginning the round, otherwise if
+		// the keystore state changed during the round (e.g. a key was removed) it
+		// could lead to internal state inconsistencies in the voter environment
+		// (e.g. we wouldn't update the voter set state after prevoting since there's
+		// no local authority id).
+		if let Some(id) = local_id.as_ref() {
+			self.voter_set_state.started_voting_on(view, id.clone());
+		}
+		// we can only sign when we have a local key in the authority set
+		// and we have a reference to the keystore.
+		let keystore = match (local_id.as_ref(), self.config.keystore.as_ref()) {
+			(Some(id), Some(keystore)) => Some((id.clone(), keystore.clone()).into()),
+			_ => None,
+		};
+
+		let (incoming, outgoing) = self.network.view_communication(
+			keystore,
+			crate::communication::View(view),
+			crate::communication::SetId(self.set_id),
+			self.voters.clone(),
+			has_voted,
+		);
+
+		// schedule incoming messages from the network to be held until
+		// corresponding blocks are imported.
+		let incoming = Box::pin(
+			UntilVoteTargetImported::new(
+				self.client.import_notification_stream(),
+				self.network.clone(),
+				self.client.clone(),
+				incoming,
+				"view",
+				None,
+			)
+			.map_err(Into::into),
+		);
+
+		// schedule network message cleanup when sink drops.
+		let outgoing = Box::pin(outgoing.sink_err_into());
+		leader::voter::communicate::RoundData { voter_id: local_id.unwrap(), incoming, outgoing }
 	}
 
-	fn preprepare(&self, view: u64) -> (Self::Hash, Self::Number) {
-		todo!()
+	fn preprepare(&self, view: u64, block: Self::Hash) -> Self::BestChain {
+		let client = self.client.clone();
+		let authority_set = self.authority_set.clone();
+		let select_chain = self.select_chain.clone();
+		let set_id = self.set_id;
+		Box::pin(async move {
+			// NOTE: when we finalize an authority set change through the sync protocol the voter is
+			//       signaled asynchronously. therefore the voter could still vote in the next round
+			//       before activating the new set. the `authority_set` is updated immediately thus
+			//       we restrict the voter based on that.
+			if set_id != authority_set.set_id() {
+				return Ok(None);
+			}
+
+			next_target(block, client, authority_set, select_chain)
+				.await
+				.map_err(|e| e.into())
+		})
 	}
 
 	fn finalize_block(
@@ -161,6 +242,78 @@ where
 			self.telemetry.clone(),
 		)
 	}
+}
+
+async fn next_target<Block, Backend, Client, SelectChain>(
+	block: Block::Hash,
+	client: Arc<Client>,
+	authority_set: SharedAuthoritySet<Block::Hash, NumberFor<Block>>,
+	select_chain: SelectChain,
+) -> Result<Option<(NumberFor<Block>, Block::Hash)>, Error>
+where
+	Backend: BackendT<Block>,
+	Block: BlockT,
+	Client: ClientForPbft<Block, Backend>,
+	SelectChain: SelectChainT<Block> + 'static,
+{
+	let base_header = match client.header(BlockId::Hash(block))? {
+		Some(h) => h,
+		None => {
+			debug!(target: "afg",
+				"Encountered error finding best chain containing {:?}: couldn't find base block",
+				block,
+			);
+
+			return Ok(None);
+		},
+	};
+
+	let result = match select_chain.finality_target(block, None).await {
+		Ok(best_hash) => {
+			let best_header = client
+				.header(BlockId::Hash(best_hash))?
+				.expect("Header known to exist after `finality_target` call; qed");
+
+			if best_header == base_header {
+				Some(best_header)
+			} else {
+				let mut target_header = best_header.clone();
+				let mut parent_header = client
+					.header(BlockId::Hash(*target_header.parent_hash()))?
+					.expect("Header known to exist after `finality_target` call; qed");
+
+				// walk backwards until we find the target block
+				loop {
+					if base_header.number() < parent_header.number() {
+						unreachable!(
+							"we are traversing backwards from a known block; \
+                         blocks are stored contiguously; \
+                         qed"
+						);
+					}
+
+					if base_header.number() == parent_header.number() {
+						break;
+					}
+
+					target_header = client
+						.header(BlockId::Hash(*target_header.parent_hash()))?
+						.expect("Header known to exist after `finality_target` call; qed");
+					parent_header = client
+						.header(BlockId::Hash(*target_header.parent_hash()))?
+						.expect("Header known to exist after `finality_target` call; qed");
+				}
+
+				Some(target_header)
+			}
+		},
+		Err(e) => {
+			warn!(target: "afg", "Encountered error finding best chain containing {:?}: {}", block, e);
+			None
+		},
+	};
+
+	Ok(result.map(|h| (*h.number(), h.hash())))
 }
 
 /// Whether we've voted already during a prior run of the program.
