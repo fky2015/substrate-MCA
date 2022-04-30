@@ -94,6 +94,7 @@ mod benefit {
 	pub(super) const BASIC_VALIDATED_CATCH_UP: Rep = Rep::new(200, "Grandpa: Catch-up message");
 	pub(super) const BASIC_VALIDATED_COMMIT: Rep = Rep::new(100, "Grandpa: Commit");
 	pub(super) const PER_EQUIVOCATION: i32 = 10;
+	pub(super) const BASIC_GLOBAL_MESSAGE: Rep = Rep::new(100, "PBFT: Global message");
 }
 /// A type that ties together our local authority id and a keystore where it is
 /// available for signing.
@@ -405,7 +406,7 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 			self.telemetry.clone(),
 		);
 
-		let outgoing = CommitsOut::<B>::new(
+		let outgoing = GlobalMessagesOut::<B>::new(
 			self.gossip_engine.clone(),
 			set_id.0,
 			is_voter,
@@ -414,18 +415,19 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 			self.telemetry.clone(),
 		);
 
-		let outgoing = outgoing.with(|out| {
-			// FIXME:: send GlobalMessageOut
-			match out {
-				leader::voter::GlobalMessageOut::Commit(view, commit) => future::ok((view, commit)),
-				_ => future::err(Error::Network(
-					"global outgoing have wring message type [NEED IMPLEMENT]".to_string(),
-				)),
-			}
-
-			// let voter::GlobalMessageOut::Commit(view, commit) = out;
-			// future::ok((view, commit))
-		});
+		// let outgoing = outgoing.with(|out| {
+		// 	// FIXME:: send GlobalMessageOut
+		// 	match out {
+		// 		leader::voter::GlobalMessageOut::Commit(view, commit) => future::ok((view, commit)),
+		// 		_ => {
+		// 			let err = Error::Network(
+		// 				"global outgoing have wring message type [NEED IMPLEMENT]".to_string(),
+		// 			);
+		// 			log::error!(target:  "afp", "{:?}", err);
+		// 			future::err(err)
+		// 		},
+		// 	}
+		// });
 
 		(incoming, outgoing)
 	}
@@ -943,7 +945,7 @@ fn check_catch_up<Block: BlockT>(
 }
 
 /// An output sink for commit messages.
-struct CommitsOut<Block: BlockT> {
+struct GlobalMessagesOut<Block: BlockT> {
 	network: Arc<Mutex<GossipEngine<Block>>>,
 	set_id: SetId,
 	is_voter: bool,
@@ -952,7 +954,7 @@ struct CommitsOut<Block: BlockT> {
 	telemetry: Option<TelemetryHandle>,
 }
 
-impl<Block: BlockT> CommitsOut<Block> {
+impl<Block: BlockT> GlobalMessagesOut<Block> {
 	/// Create a new commit output stream.
 	pub(crate) fn new(
 		network: Arc<Mutex<GossipEngine<Block>>>,
@@ -962,7 +964,7 @@ impl<Block: BlockT> CommitsOut<Block> {
 		neighbor_sender: periodic::NeighborPacketSender<Block>,
 		telemetry: Option<TelemetryHandle>,
 	) -> Self {
-		CommitsOut {
+		GlobalMessagesOut {
 			network,
 			set_id: SetId(set_id),
 			is_voter,
@@ -975,7 +977,7 @@ impl<Block: BlockT> CommitsOut<Block> {
 
 // FIXME: use GlobalMessageOut instead of FinalizedCommit
 // Because ChangeView and Empty also should be delivered without delayed.
-impl<Block: BlockT> Sink<(ViewNumber, FinalizedCommit<Block>)> for CommitsOut<Block> {
+impl<Block: BlockT> Sink<GlobalCommunicationOut<Block>> for GlobalMessagesOut<Block> {
 	type Error = Error;
 
 	fn poll_ready(self: Pin<&mut Self>, _: &mut Context) -> Poll<Result<(), Self::Error>> {
@@ -984,51 +986,68 @@ impl<Block: BlockT> Sink<(ViewNumber, FinalizedCommit<Block>)> for CommitsOut<Bl
 
 	fn start_send(
 		self: Pin<&mut Self>,
-		input: (ViewNumber, FinalizedCommit<Block>),
+		// FIXME:
+		input: GlobalCommunicationOut<Block>,
 	) -> Result<(), Self::Error> {
 		if !self.is_voter {
 			return Ok(());
 		}
 
-		let (view, f_commit) = input;
-		let view = View(view);
+		let message = match input {
+			voter::GlobalMessageOut::Commit(view, f_commit) => {
+				let view = View(view);
 
-		telemetry!(
-			self.telemetry;
-			CONSENSUS_DEBUG;
-			"afp.global_message";
-			"target_number" => ?f_commit.target_number,
-			"target_hash" => ?f_commit.target_hash,
-		);
-		let (commits, auth_data) = f_commit
-			.commits
-			.into_iter()
-			.map(|signed| (signed.commit, (signed.signature, signed.id)))
-			.unzip();
+				telemetry!(
+					self.telemetry;
+					CONSENSUS_DEBUG;
+					"afp.global_message";
+					"target_number" => ?f_commit.target_number,
+					"target_hash" => ?f_commit.target_hash,
+				);
+				let (commits, auth_data) = f_commit
+					.commits
+					.into_iter()
+					.map(|signed| (signed.commit, (signed.signature, signed.id)))
+					.unzip();
 
-		let compact_commit = CompactCommit::<Block> {
-			target_hash: f_commit.target_hash,
-			target_number: f_commit.target_number,
-			commits,
-			auth_data,
+				let compact_commit = CompactCommit::<Block> {
+					target_hash: f_commit.target_hash,
+					target_number: f_commit.target_number,
+					commits,
+					auth_data,
+				};
+
+				let message = GossipMessage::Commit(FullCommitMessage::<Block> {
+					view,
+					set_id: self.set_id,
+					message: compact_commit,
+				});
+
+				// the gossip validator needs to be made aware of the best commit-height we know of
+				// before gossiping
+				self.gossip_validator.note_commit_finalized(
+					view,
+					self.set_id,
+					f_commit.target_number,
+					|to, neighbor| self.neighbor_sender.send(to, neighbor),
+				);
+
+				message
+			},
+			voter::GlobalMessageOut::ViewChange(view_change) => {
+				GossipMessage::Global(gossip::GlobalMessage {
+					set_id: self.set_id,
+					message: crate::GlobalMessage::ViewChange(view_change),
+				})
+			},
+			voter::GlobalMessageOut::Empty => GossipMessage::Global(gossip::GlobalMessage {
+				set_id: self.set_id,
+				message: crate::GlobalMessage::Empty,
+			}),
 		};
-
-		let message = GossipMessage::Commit(FullCommitMessage::<Block> {
-			view,
-			set_id: self.set_id,
-			message: compact_commit,
-		});
 
 		let topic = global_topic::<Block>(self.set_id.0);
 
-		// the gossip validator needs to be made aware of the best commit-height we know of
-		// before gossiping
-		self.gossip_validator.note_commit_finalized(
-			view,
-			self.set_id,
-			f_commit.target_number,
-			|to, neighbor| self.neighbor_sender.send(to, neighbor),
-		);
 		self.network.lock().gossip_message(topic, message.encode(), false);
 
 		Ok(())

@@ -4,7 +4,7 @@ use crate::environment::VoterSetState;
 use authorities::SharedAuthoritySet;
 use authorities::{AuthoritySet, AuthoritySetChanges};
 use aux_schema::PersistentData;
-use communication::{Network as NetworkT, NetworkBridge};
+use communication::{Network as NetworkT, NetworkBridge, View};
 use environment::Environment;
 use finality_grandpa::{
 	leader::{self, voter, Error as PbftError, VoterSet},
@@ -12,7 +12,7 @@ use finality_grandpa::{
 };
 use futures::{future, prelude::*, Future, Sink, SinkExt, Stream, StreamExt, TryStreamExt};
 use log::{debug, error, info};
-use parity_scale_codec::Decode;
+use parity_scale_codec::{Decode, Encode};
 use parking_lot::RwLock;
 use prometheus_endpoint::{PrometheusError, Registry};
 use sc_client_api::{
@@ -100,6 +100,15 @@ pub type FinalizedCommit<Block> = leader::FinalizedCommit<
 	AuthoritySignature,
 	AuthorityId,
 >;
+
+pub type ViewChange = leader::ViewChange<AuthorityId>;
+
+/// FIXME:
+#[derive(Debug, Encode, Decode)]
+pub enum GlobalMessage {
+	ViewChange(ViewChange),
+	Empty,
+}
 
 /// a compact commit message for this chain's block type.
 pub type CompactCommit<Block> = leader::CompactCommit<
@@ -537,6 +546,13 @@ where
 
 				let last_completed_view = completed_views.last();
 
+				afp_log!(
+					true,
+					"last_finalized: {:?}, last_completed_view: {:?}.",
+					last_finalized,
+					last_completed_view
+				);
+
 				let mut voter = voter::Voter::new(
 					self.env.clone(),
 					(*self.env.voters).clone(),
@@ -556,6 +572,7 @@ where
 				self.voter = Box::pin(async move {
 					// TODO: Result<>
 					voter.run().await;
+					afp_log!(true, "async voter exit.");
 					Ok(())
 				});
 			},

@@ -18,7 +18,7 @@ use sp_arithmetic::traits::Zero;
 use sp_finality_pbft::AuthorityId;
 use sp_runtime::traits::Block as BlockT;
 
-use crate::{environment, CatchUp, CompactCommit, SignedMessage};
+use crate::{environment, CatchUp, CompactCommit, SignedMessage, ViewChange};
 
 use super::{benefit, cost, SetId, View};
 
@@ -244,8 +244,10 @@ fn neighbor_topics<B: BlockT>(peer_view: &PeerView<NumberFor<B>>) -> Vec<B::Hash
 pub(super) enum GossipMessage<Block: BlockT> {
 	/// PBFT message with view and set info.
 	Vote(VoteMessage<Block>),
-	/// Grandpa commit message with round and set info.
+	/// PBFT commit message with round and set info.
 	Commit(FullCommitMessage<Block>),
+	/// PBFT global message
+	Global(GlobalMessage),
 	/// A neighbor packet. Not repropagated.
 	Neighbor(VersionedNeighborPacket<NumberFor<Block>>),
 	/// Grandpa catch up request message with round and set info. Not repropagated.
@@ -280,6 +282,15 @@ pub(super) struct FullCommitMessage<Block: BlockT> {
 	pub(super) set_id: SetId,
 	/// The compact commit message.
 	pub(super) message: CompactCommit<Block>,
+}
+
+/// Network level global message
+#[derive(Debug, Encode, Decode)]
+pub(super) struct GlobalMessage {
+	/// The voter set ID this message is from.
+	pub(super) set_id: SetId,
+	/// The global message.
+	pub(super) message: crate::GlobalMessage,
 }
 
 /// V1 neighbor packet. Neighbor packets are sent from nodes to their peers
@@ -858,6 +869,16 @@ impl<Block: BlockT> Inner<Block> {
 		Action::ProcessAndDiscard(topic, benefit::BASIC_VALIDATED_COMMIT)
 	}
 
+	fn validate_global_message(
+		&mut self,
+		who: &PeerId,
+		full: &GlobalMessage,
+	) -> Action<Block::Hash> {
+		// always discard catch up messages, they're point-to-point
+		let topic = super::global_topic::<Block>(full.set_id.0);
+		return Action::ProcessAndDiscard(topic, benefit::NEIGHBOR_MESSAGE);
+	}
+
 	fn validate_catch_up_message(
 		&mut self,
 		who: &PeerId,
@@ -1319,6 +1340,10 @@ impl<Block: BlockT> GossipValidator<Block> {
 					message_name = Some("commit");
 					self.inner.write().validate_commit_message(who, message)
 				},
+				Ok(GossipMessage::Global(ref message)) => {
+					message_name = Some("global");
+					self.inner.write().validate_global_message(who, message)
+				},
 				Ok(GossipMessage::Neighbor(update)) => {
 					message_name = Some("neighbor");
 					let (topics, action, catch_up, report) = self
@@ -1515,6 +1540,7 @@ impl<Block: BlockT> sc_network_gossip::Validator<Block> for GossipValidator<Bloc
 						== Consider::Accept && Some(&full.message.target_number)
 						== local_view.last_commit_height()
 				},
+				Ok(GossipMessage::Global(_)) => false,
 				Ok(GossipMessage::Neighbor(_)) => false,
 				Ok(GossipMessage::CatchUpRequest(_)) => false,
 				Ok(GossipMessage::CatchUp(_)) => false,
