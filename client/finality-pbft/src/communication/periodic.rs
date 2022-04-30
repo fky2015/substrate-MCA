@@ -31,7 +31,7 @@ impl<B: BlockT> NeighborPacketSender<B> {
 		neighbor_packet: NeighborPacket<NumberFor<B>>,
 	) {
 		if let Err(err) = self.0.unbounded_send((who, neighbor_packet)) {
-			debug!(target: "afg", "Failed to send neighbor packet: {:?}", err);
+			debug!(target: "afp", "Failed to send neighbor packet: {:?}", err);
 		}
 	}
 }

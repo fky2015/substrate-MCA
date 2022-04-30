@@ -471,7 +471,7 @@ impl<N: Ord> Peers<N> {
 			last_commit: Some(update.commit_finalized_height),
 		};
 
-		trace!(target: "afg", "Peer {} updated view. Now at {:?}, {:?}",
+		trace!(target: "afp", "Peer {} updated view. Now at {:?}, {:?}",
 			who, peer.view.view, peer.view.set_id);
 
 		Ok(Some(&peer.view))
@@ -680,7 +680,7 @@ impl<Block: BlockT> Inner<Block> {
 
 			let set_id = local_view.set_id;
 
-			debug!(target: "afg", "Voter {} noting beginning of round {:?} to network.",
+			debug!(target: "afp", "Voter {} noting beginning of round {:?} to network.",
 				self.config.name(), (view, set_id));
 
 			local_view.update_view(view);
@@ -703,7 +703,7 @@ impl<Block: BlockT> Inner<Block> {
 							!= authorities.iter().collect();
 
 						if diff_authorities {
-							debug!(target: "afg",
+							debug!(target: "afp",
 								"Gossip validator noted set {:?} twice with different authorities. \
 								Was the authority set hard forked?",
 								set_id,
@@ -786,11 +786,11 @@ impl<Block: BlockT> Inner<Block> {
 
 		// ensure authority is part of the set.
 		if !self.authorities.contains(&full.message.id) {
-			debug!(target: "afg", "Message from unknown voter: {}", full.message.id);
+			debug!(target: "afp", "Message from unknown voter: {}", full.message.id);
 			telemetry!(
 				self.config.telemetry;
 				CONSENSUS_DEBUG;
-				"afg.bad_msg_signature";
+				"afp.bad_msg_signature";
 				"signature" => ?full.message.id,
 			);
 			return Action::Discard(cost::UNKNOWN_VOTER);
@@ -803,11 +803,11 @@ impl<Block: BlockT> Inner<Block> {
 			full.view.0,
 			full.set_id.0,
 		) {
-			debug!(target: "afg", "Bad message signature {}", full.message.id);
+			debug!(target: "afp", "Bad message signature {}", full.message.id);
 			telemetry!(
 				self.config.telemetry;
 				CONSENSUS_DEBUG;
-				"afg.bad_msg_signature";
+				"afp.bad_msg_signature";
 				"signature" => ?full.message.id,
 			);
 			return Action::Discard(cost::BAD_SIGNATURE);
@@ -840,11 +840,11 @@ impl<Block: BlockT> Inner<Block> {
 		if full.message.commits.len() != full.message.auth_data.len()
 			|| full.message.commits.is_empty()
 		{
-			debug!(target: "afg", "Malformed compact commit");
+			debug!(target: "afp", "Malformed compact commit");
 			telemetry!(
 				self.config.telemetry;
 				CONSENSUS_DEBUG;
-				"afg.malformed_compact_commit";
+				"afp.malformed_compact_commit";
 				"commits_len" => ?full.message.commits.len(),
 				"auth_data_len" => ?full.message.auth_data.len(),
 				"commits_is_empty" => ?full.message.commits.is_empty(),
@@ -899,7 +899,7 @@ impl<Block: BlockT> Inner<Block> {
 			PendingCatchUp::Processing { .. } => {
 				self.pending_catch_up = PendingCatchUp::None;
 			},
-			state => debug!(target: "afg",
+			state => debug!(target: "afp",
 				"Noted processed catch up message when state was: {:?}",
 				state,
 			),
@@ -944,7 +944,7 @@ impl<Block: BlockT> Inner<Block> {
 			return (None, Action::Discard(Misbehavior::OutOfScopeMessage.cost()));
 		}
 
-		trace!(target: "afg", "Replying to catch-up request for view {} from {} with view {}",
+		trace!(target: "afp", "Replying to catch-up request for view {} from {} with view {}",
 			request.view.0,
 			who,
 			last_completed_view.number,
@@ -1017,7 +1017,7 @@ impl<Block: BlockT> Inner<Block> {
 				let (catch_up_allowed, catch_up_report) = self.note_catch_up_request(who, &request);
 
 				if catch_up_allowed {
-					debug!(target: "afg", "Sending catch-up request for view {} to {}",
+					debug!(target: "afp", "Sending catch-up request for view {} to {}",
 						   view,
 						   who,
 					);
@@ -1231,7 +1231,7 @@ impl<Block: BlockT> GossipValidator<Block> {
 		let metrics = match prometheus_registry.map(Metrics::register) {
 			Some(Ok(metrics)) => Some(metrics),
 			Some(Err(e)) => {
-				debug!(target: "afg", "Failed to register metrics: {:?}", e);
+				debug!(target: "afp", "Failed to register metrics: {:?}", e);
 				None
 			},
 			None => None,
@@ -1348,11 +1348,11 @@ impl<Block: BlockT> GossipValidator<Block> {
 				},
 				Err(e) => {
 					message_name = None;
-					debug!(target: "afg", "Error decoding message: {}", e);
+					debug!(target: "afp", "Error decoding message: {}", e);
 					telemetry!(
 						self.telemetry;
 						CONSENSUS_DEBUG;
-						"afg.err_decoding_msg";
+						"afp.err_decoding_msg";
 						"" => "",
 					);
 

@@ -258,7 +258,7 @@ where
 		let number = pending.canon_height.clone();
 
 		debug!(
-			target: "afg",
+			target: "afp",
 			"Inserting potential standard set change signaled at block {:?} (delayed by {:?} blocks).",
 			(&number, &hash),
 			pending.delay,
@@ -267,7 +267,7 @@ where
 		self.pending_standard_changes.import(hash, number, pending, is_descendent_of)?;
 
 		debug!(
-			target: "afg",
+			target: "afp",
 			"There are now {} alternatives for the next pending standard change (roots), and a \
 			 total of {} pending standard changes (across all forks).",
 			self.pending_standard_changes.roots().count(),
@@ -306,7 +306,7 @@ where
 			.unwrap_or_else(|i| i);
 
 		debug!(
-			target: "afg",
+			target: "afp",
 			"Inserting potential forced set change at block {:?} (delayed by {:?} blocks).",
 			(&pending.canon_height, &pending.canon_hash),
 			pending.delay,
@@ -314,7 +314,7 @@ where
 
 		self.pending_forced_changes.insert(idx, pending);
 
-		debug!(target: "afg", "There are now {} pending forced changes.", self.pending_forced_changes.len());
+		debug!(target: "afp", "There are now {} pending forced changes.", self.pending_forced_changes.len());
 
 		Ok(())
 	}
@@ -419,7 +419,7 @@ where
 					if standard_change.effective_number() <= median_last_finalized
 						&& is_descendent_of(&standard_change.canon_hash, &change.canon_hash)?
 					{
-						log::info!(target: "afg",
+						log::info!(target: "afp",
 							"Not applying authority set change forced at block #{:?}, due to pending standard change at block #{:?}",
 							change.canon_height,
 							standard_change.effective_number(),
@@ -432,7 +432,7 @@ where
 				}
 
 				// apply this change: make the set canonical
-				afg_log!(
+				afp_log!(
 					initial_sync,
 					"👴 Applying authority set change forced at block #{:?}",
 					change.canon_height,
@@ -441,7 +441,7 @@ where
 				telemetry!(
 					telemetry;
 					CONSENSUS_INFO;
-					"afg.applying_forced_authority_set_change";
+					"afp.applying_forced_authority_set_change";
 					"block" => ?change.canon_height
 				);
 
@@ -515,7 +515,7 @@ where
 				}
 
 				if let Some(change) = change {
-					afg_log!(
+					afp_log!(
 						initial_sync,
 						"👴 Applying authority set change scheduled at block #{:?}",
 						change.canon_height,
@@ -523,7 +523,7 @@ where
 					telemetry!(
 						telemetry;
 						CONSENSUS_INFO;
-						"afg.applying_scheduled_authority_set_change";
+						"afp.applying_scheduled_authority_set_change";
 						"block" => ?change.canon_height
 					);
 

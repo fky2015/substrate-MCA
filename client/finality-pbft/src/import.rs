@@ -573,7 +573,7 @@ where
 				Ok(ImportResult::Imported(aux)) => aux,
 				Ok(r) => {
 					debug!(
-						target: "afg",
+						target: "afp",
 						"Restoring old authority set after block import result: {:?}",
 						r,
 					);
@@ -582,7 +582,7 @@ where
 				},
 				Err(e) => {
 					debug!(
-						target: "afg",
+						target: "afp",
 						"Restoring old authority set after block import error: {}",
 						e,
 					);
@@ -649,7 +649,7 @@ where
 				import_res.unwrap_or_else(|err| {
 					if needs_justification {
 						debug!(
-							target: "afg",
+							target: "afp",
 							"Requesting justification from peers due to imported block #{} that enacts authority set change with invalid justification: {}",
 							number,
 							err
@@ -662,7 +662,7 @@ where
 			None => {
 				if needs_justification {
 					debug!(
-						target: "afg",
+						target: "afp",
 						"Imported unjustified block #{} that enacts authority set change, waiting for finality for enactment.",
 						number,
 					);
@@ -788,7 +788,7 @@ where
 
 		match result {
 			Err(CommandOrError::VoterCommand(command)) => {
-				afg_log!(
+				afp_log!(
 					initial_sync,
 					"👴 Imported justification for block #{} that triggers \
 					command {}, signaling voter.",

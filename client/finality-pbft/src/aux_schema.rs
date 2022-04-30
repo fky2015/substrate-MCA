@@ -106,7 +106,7 @@ where
 	}
 
 	// genesis.
-	info!(target: "afg", "👴 Loading PBFT authority set \
+	info!(target: "afp", "👴 Loading PBFT authority set \
 		from genesis on what appears to be first startup.");
 
 	let genesis_authorities = genesis_authorities()?;

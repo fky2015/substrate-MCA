@@ -241,7 +241,7 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 					gossip_engine.lock().register_gossip_message(topic, message.encode());
 				}
 
-				trace!(target: "afg",
+				trace!(target: "afp",
 					"Registered {} messages for topic {:?} (view: {}, set_id: {})",
 					view.votes.len(),
 					topic,
@@ -306,13 +306,13 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 
 				match decoded {
 					Err(ref e) => {
-						debug!(target: "afg", "Skipping malformed message {:?}: {}", notification, e);
+						debug!(target: "afp", "Skipping malformed message {:?}: {}", notification, e);
 						future::ready(None)
 					},
 					Ok(GossipMessage::Vote(msg)) => {
 						// check signature.
 						if !voters.contains(&msg.message.id) {
-							debug!(target: "afg", "Skipping message from unknown voter {}", msg.message.id);
+							debug!(target: "afp", "Skipping message from unknown voter {}", msg.message.id);
 							return future::ready(None);
 						}
 
@@ -322,7 +322,7 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 									telemetry!(
 										telemetry;
 										CONSENSUS_INFO;
-										"afg.received_propose";
+										"afp.received_propose";
 										"voter" => ?format!("{}", msg.message.id),
 										"target_number" => ?preprepare.target_number,
 										"target_hash" => ?preprepare.target_hash,
@@ -332,7 +332,7 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 									telemetry!(
 										telemetry;
 										CONSENSUS_INFO;
-										"afg.received_prevote";
+										"afp.received_prevote";
 										"voter" => ?format!("{}", msg.message.id),
 										"target_number" => ?prepare.target_number,
 										"target_hash" => ?prepare.target_hash,
@@ -342,7 +342,7 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 									telemetry!(
 										telemetry;
 										CONSENSUS_INFO;
-										"afg.received_precommit";
+										"afp.received_precommit";
 										"voter" => ?format!("{}", msg.message.id),
 										"target_number" => ?commit.target_number,
 										"target_hash" => ?commit.target_hash,
@@ -354,7 +354,7 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 						future::ready(Some(msg.message))
 					},
 					_ => {
-						debug!(target: "afg", "Skipping unknown message type");
+						debug!(target: "afp", "Skipping unknown message type");
 						future::ready(None)
 					},
 				}
@@ -512,7 +512,7 @@ fn incoming_global<B: BlockT>(
 				telemetry!(
 					telemetry;
 					CONSENSUS_INFO;
-					"afg.received_commit";
+					"afp.received_commit";
 					"contains_precommits_signed_by" => ?precommits_signed_by,
 					"target_number" => ?msg.message.target_number.clone(),
 					"target_hash" => ?msg.message.target_hash.clone(),
@@ -609,7 +609,7 @@ fn incoming_global<B: BlockT>(
 			// this could be optimized by decoding piecewise.
 			let decoded = GossipMessage::<B>::decode(&mut &notification.message[..]);
 			if let Err(ref e) = decoded {
-				trace!(target: "afg", "Skipping malformed commit message {:?}: {}", notification, e);
+				trace!(target: "afp", "Skipping malformed commit message {:?}: {}", notification, e);
 			}
 			future::ready(decoded.map(move |d| (notification, d)).ok())
 		})
@@ -623,7 +623,7 @@ fn incoming_global<B: BlockT>(
 				},
 				_ => {
 					// TODO: FKY
-					debug!(target: "afg", "Skipping unknown message type");
+					debug!(target: "afp", "Skipping unknown message type");
 					None
 				},
 			})
@@ -715,7 +715,7 @@ impl<Block: BlockT> Sink<Message<Block>> for OutgoingMessages<Block> {
 			});
 
 			debug!(
-				target: "afg",
+				target: "afp",
 				"Announcing block {} to peers which we voted on in round {} in set {}",
 				target_hash,
 				self.view,
@@ -725,7 +725,7 @@ impl<Block: BlockT> Sink<Message<Block>> for OutgoingMessages<Block> {
 			telemetry!(
 				self.telemetry;
 				CONSENSUS_DEBUG;
-				"afg.announcing_blocks_to_voted_peers";
+				"afp.announcing_blocks_to_voted_peers";
 				"block" => ?target_hash, "view" => ?self.view, "set_id" => ?self.set_id,
 			);
 
@@ -775,7 +775,7 @@ fn check_compact_commit<Block: BlockT>(
 
 	for (_, ref id) in &msg.auth_data {
 		if let None = voters.get(id) {
-			debug!(target: "afg", "Skipping commit containing unknown voter {}", id);
+			debug!(target: "afp", "Skipping commit containing unknown voter {}", id);
 			return Err(cost::MALFORMED_COMMIT);
 		}
 	}
@@ -799,11 +799,11 @@ fn check_compact_commit<Block: BlockT>(
 			set_id.0,
 			&mut buf,
 		) {
-			debug!(target: "afg", "Bad commit message signature {}", id);
+			debug!(target: "afp", "Bad commit message signature {}", id);
 			telemetry!(
 				telemetry;
 				CONSENSUS_DEBUG;
-				"afg.bad_commit_msg_signature";
+				"afp.bad_commit_msg_signature";
 				"id" => ?id,
 			);
 			let cost = Misbehavior::BadCommitMessage {
@@ -849,7 +849,7 @@ fn check_catch_up<Block: BlockT>(
 
 		for id in msgs {
 			if let None = voters.get(&id) {
-				debug!(target: "afg", "Skipping catch up message containing unknown voter {}", id);
+				debug!(target: "afp", "Skipping catch up message containing unknown voter {}", id);
 				return Err(cost::MALFORMED_CATCH_UP);
 			}
 		}
@@ -893,11 +893,11 @@ fn check_catch_up<Block: BlockT>(
 			if !sp_finality_pbft::check_message_signature_with_buffer(
 				&msg, id, sig, view, set_id, buf,
 			) {
-				debug!(target: "afg", "Bad catch up message signature {}", id);
+				debug!(target: "afp", "Bad catch up message signature {}", id);
 				telemetry!(
 					telemetry;
 					CONSENSUS_DEBUG;
-					"afg.bad_catch_up_msg_signature";
+					"afp.bad_catch_up_msg_signature";
 					"id" => ?id,
 				);
 
@@ -996,7 +996,7 @@ impl<Block: BlockT> Sink<(ViewNumber, FinalizedCommit<Block>)> for CommitsOut<Bl
 		telemetry!(
 			self.telemetry;
 			CONSENSUS_DEBUG;
-			"afg.global_message";
+			"afp.global_message";
 			"target_number" => ?f_commit.target_number,
 			"target_hash" => ?f_commit.target_hash,
 		);

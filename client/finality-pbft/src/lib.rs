@@ -42,7 +42,7 @@ use std::{
 // utility logging macro that takes as first argument a conditional to
 // decide whether to log under debug or info level (useful to restrict
 // logging under initial sync).
-macro_rules! afg_log {
+macro_rules! afp_log {
 	($condition:expr, $($msg: expr),+ $(,)?) => {
 		{
 			let log_level = if $condition {
@@ -51,7 +51,7 @@ macro_rules! afg_log {
 				log::Level::Info
 			};
 
-			log::log!(target: "afg", log_level, $($msg),+);
+			log::log!(target: "afp", log_level, $($msg),+);
 		}
 	};
 }
@@ -296,7 +296,7 @@ where
 				telemetry!(
 					telemetry;
 					CONSENSUS_DEBUG;
-					"afg.loading_authorities";
+					"afp.loading_authorities";
 					"authorities_len" => ?authorities.len()
 				);
 				Ok(authorities)
@@ -447,7 +447,7 @@ where
 		let metrics = match prometheus_registry.as_ref().map(Metrics::register) {
 			Some(Ok(metrics)) => Some(metrics),
 			Some(Err(e)) => {
-				debug!(target: "afg", "Failed to register metrics: {:?}", e);
+				debug!(target: "afp", "Failed to register metrics: {:?}", e);
 				None
 			},
 			None => None,
@@ -488,7 +488,7 @@ where
 	/// state. This method should be called when we know that the authority set
 	/// has changed (e.g. as signalled by a voter command).
 	fn rebuild_voter(&mut self) {
-		debug!(target: "afg", "{}: Starting new voter with set ID {}", self.env.config.name(), self.env.set_id);
+		debug!(target: "afp", "{}: Starting new voter with set ID {}", self.env.config.name(), self.env.set_id);
 
 		let maybe_authority_id =
 			local_authority_id(&self.env.voters, self.env.config.keystore.as_ref());
@@ -497,7 +497,7 @@ where
 		telemetry!(
 			self.telemetry;
 			CONSENSUS_DEBUG;
-			"afg.starting_new_voter";
+			"afp.starting_new_voter";
 			"name" => ?self.env.config.name(),
 			"set_id" => ?self.env.set_id,
 			"authority_id" => authority_id,
@@ -514,7 +514,7 @@ where
 		telemetry!(
 			self.telemetry;
 			CONSENSUS_INFO;
-			"afg.authority_set";
+			"afp.authority_set";
 			"number" => ?chain_info.finalized_number,
 			"hash" => ?chain_info.finalized_hash,
 			"authority_id" => authority_id,
@@ -547,7 +547,7 @@ where
 
 				// Repoint shared_voter_state so that the RPC endpoint can query the state
 				if self.shared_voter_state.reset(voter.voter_state()).is_none() {
-					info!(target: "afg",
+					info!(target: "afp",
 						"Timed out trying to update shared GRANDPA voter state. \
 						RPC endpoints may return stale data."
 					);
@@ -574,7 +574,7 @@ where
 				telemetry!(
 					self.telemetry;
 					CONSENSUS_INFO;
-					"afg.voter_command_change_authorities";
+					"afp.voter_command_change_authorities";
 					"number" => ?new.canon_number,
 					"hash" => ?new.canon_hash,
 					"voters" => ?voters,
@@ -619,7 +619,7 @@ where
 				Ok(())
 			},
 			VoterCommand::Pause(reason) => {
-				info!(target: "afg", "Pausing old validator set: {}", reason);
+				info!(target: "afp", "Pausing old validator set: {}", reason);
 
 				// not racing because old voter is shut down.
 				self.env.update_voter_set_state(|voter_set_state| {
@@ -797,7 +797,7 @@ where
 				telemetry!(
 					telemetry;
 					CONSENSUS_INFO;
-					"afg.authority_set";
+					"afp.authority_set";
 					"authority_id" => maybe_authority_id.map_or("".into(), |s| s.to_string()),
 					"authority_set_id" => ?set_id,
 					"authorities" => authorities,
@@ -825,10 +825,10 @@ where
 	);
 
 	let voter_work = voter_work.map(|res| match res {
-		Ok(()) => error!(target: "afg",
+		Ok(()) => error!(target: "afp",
 			"GRANDPA voter future has concluded naturally, this should be unreachable."
 		),
-		Err(e) => error!(target: "afg", "GRANDPA voter error: {}", e),
+		Err(e) => error!(target: "afp", "GRANDPA voter error: {}", e),
 	});
 
 	// Make sure that `telemetry_task` doesn't accidentally finish and kill pbft.

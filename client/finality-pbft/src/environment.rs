@@ -259,7 +259,7 @@ where
 	let base_header = match client.header(BlockId::Hash(block))? {
 		Some(h) => h,
 		None => {
-			debug!(target: "afg",
+			debug!(target: "afp",
 				"Encountered error finding best chain containing {:?}: couldn't find base block",
 				block,
 			);
@@ -308,7 +308,7 @@ where
 			}
 		},
 		Err(e) => {
-			warn!(target: "afg", "Encountered error finding best chain containing {:?}: {}", block, e);
+			warn!(target: "afp", "Encountered error finding best chain containing {:?}: {}", block, e);
 			None
 		},
 	};
@@ -715,7 +715,7 @@ where
 		// This can happen after a forced change (triggered manually from the runtime when
 		// finality is stalled), since the voter will be restarted at the median last finalized
 		// block, which can be lower than the local best finalized block.
-		warn!(target: "afg", "Re-finalized block #{:?} ({:?}) in the canonical chain, current best finalized is #{:?}",
+		warn!(target: "afp", "Re-finalized block #{:?} ({:?}) in the canonical chain, current best finalized is #{:?}",
 				hash,
 				number,
 				status.finalized_number,
@@ -745,7 +745,7 @@ where
 		) {
 			if let Some(sender) = justification_sender {
 				if let Err(err) = sender.notify(justification) {
-					warn!(target: "afg", "Error creating justification for subscriber: {}", err);
+					warn!(target: "afp", "Error creating justification for subscriber: {}", err);
 				}
 			}
 		}
@@ -795,16 +795,16 @@ where
 		client
 			.apply_finality(import_op, BlockId::Hash(hash), persisted_justification, true)
 			.map_err(|e| {
-				warn!(target: "afg", "Error applying finality to block {:?}: {}", (hash, number), e);
+				warn!(target: "afp", "Error applying finality to block {:?}: {}", (hash, number), e);
 				e
 			})?;
 
-		debug!(target: "afg", "Finalizing blocks up to ({:?}, {})", number, hash);
+		debug!(target: "afp", "Finalizing blocks up to ({:?}, {})", number, hash);
 
 		telemetry!(
 			telemetry;
 			CONSENSUS_INFO;
-			"afg.finalized_blocks_up_to";
+			"afp.finalized_blocks_up_to";
 			"number" => ?number, "hash" => ?hash,
 		);
 
@@ -817,19 +817,19 @@ where
 			let (new_id, set_ref) = authority_set.current();
 
 			if set_ref.len() > 16 {
-				afg_log!(
+				afp_log!(
 					initial_sync,
 					"👴 Applying GRANDPA set change to new set with {} authorities",
 					set_ref.len(),
 				);
 			} else {
-				afg_log!(initial_sync, "👴 Applying GRANDPA set change to new set {:?}", set_ref);
+				afp_log!(initial_sync, "👴 Applying GRANDPA set change to new set {:?}", set_ref);
 			}
 
 			telemetry!(
 				telemetry;
 				CONSENSUS_INFO;
-				"afg.generating_new_authority_set";
+				"afp.generating_new_authority_set";
 				"number" => ?canon_number, "hash" => ?canon_hash,
 				"authorities" => ?set_ref.to_vec(),
 				"set_id" => ?new_id,
@@ -852,8 +852,8 @@ where
 			);
 
 			if let Err(e) = write_result {
-				warn!(target: "afg", "Failed to write updated authority set to disk. Bailing.");
-				warn!(target: "afg", "Node is in a potentially inconsistent state.");
+				warn!(target: "afp", "Failed to write updated authority set to disk. Bailing.");
+				warn!(target: "afp", "Node is in a potentially inconsistent state.");
 
 				return Err(e.into());
 			}
