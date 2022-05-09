@@ -783,7 +783,7 @@ fn check_compact_commit<Block: BlockT>(
 	}
 
 	// Super majority.
-	if &msg.auth_data.len() < &voters.threshould() {
+	if &msg.auth_data.len() < &voters.threshold() {
 		return Err(cost::MALFORMED_COMMIT);
 	}
 
@@ -834,13 +834,13 @@ fn check_catch_up<Block: BlockT>(
 
 	fn check_len<'a>(
 		voters: &VoterSet<AuthorityId>,
-		threshould: usize,
+		threshold: usize,
 		msgs_len: usize,
 		msgs: impl Iterator<Item = &'a AuthorityId>,
 		full_len: usize,
 	) -> Result<(), ReputationChange> {
 		// Super majority.
-		if msgs_len < threshould {
+		if msgs_len < threshold {
 			return Err(cost::MALFORMED_CATCH_UP);
 		}
 
@@ -861,7 +861,7 @@ fn check_catch_up<Block: BlockT>(
 
 	check_len(
 		voters,
-		voters.threshould(),
+		voters.threshold(),
 		msg.prepares.len(),
 		msg.prepares.iter().map(|vote| &vote.id),
 		full_len,
@@ -869,7 +869,7 @@ fn check_catch_up<Block: BlockT>(
 
 	check_len(
 		voters,
-		voters.threshould(),
+		voters.threshold(),
 		msg.commits.len(),
 		msg.commits.iter().map(|vote| &vote.id),
 		full_len,
