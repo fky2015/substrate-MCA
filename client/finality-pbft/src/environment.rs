@@ -217,6 +217,7 @@ where
 				return Ok(None);
 			}
 
+            // FIXME: error
 			next_target(block, client, authority_set, select_chain)
 				.await
 				.map_err(|e| e.into())

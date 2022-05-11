@@ -315,7 +315,7 @@ where
 			if let Some(metrics) = &mut this.metrics {
 				metrics.waiting_messages_dec();
 			}
-			return Poll::Ready(Some(Ok(ready)));
+			return Poll::Ready(Some(Ok(ready)))
 		}
 
 		if this.import_notifications.is_done() && this.incoming_messages.is_done() {
@@ -343,31 +343,29 @@ impl<Block: BlockT> BlockUntilImported<Block> for SignedMessage<Block> {
 		msg: Self::Blocked,
 		status_check: &BlockStatus,
 	) -> Result<DiscardWaitOrReady<Block, Self, Self::Blocked>, Error> {
-		return Ok(DiscardWaitOrReady::Ready(msg));
-		// let (&target_hash, target_number) = msg.target();
-		//
-		// if let Some(number) = status_check.block_number(target_hash)? {
-		// 	if number != target_number {
-		// 		warn_authority_wrong_target(target_hash, msg.id);
-		// 		return Ok(DiscardWaitOrReady::Discard)
-		// 	} else {
-		// 		return Ok(DiscardWaitOrReady::Ready(msg))
-		// 	}
-		// }
-		//
-		// Ok(DiscardWaitOrReady::Wait(vec![(target_hash, target_number, msg)]))
+		let (&target_hash, target_number) = msg.target();
+
+		if let Some(number) = status_check.block_number(target_hash)? {
+			if number != target_number {
+				warn_authority_wrong_target(target_hash, msg.id);
+				return Ok(DiscardWaitOrReady::Discard)
+			} else {
+				return Ok(DiscardWaitOrReady::Ready(msg))
+			}
+		}
+
+		Ok(DiscardWaitOrReady::Wait(vec![(target_hash, target_number, msg)]))
 	}
 
 	fn wait_completed(self, canon_number: NumberFor<Block>) -> Option<Self::Blocked> {
-		Some(self)
-		// let (&target_hash, target_number) = self.target();
-		// if canon_number != target_number {
-		// 	warn_authority_wrong_target(target_hash, self.id);
-		//
-		// 	None
-		// } else {
-		// 	Some(self)
-		// }
+		let (&target_hash, target_number) = self.target();
+		if canon_number != target_number {
+			warn_authority_wrong_target(target_hash, self.id);
+
+			None
+		} else {
+			Some(self)
+		}
 	}
 }
 
@@ -399,6 +397,7 @@ impl<Block: BlockT> BlockUntilImported<Block> for BlockGlobalMessage<Block> {
 		input: Self::Blocked,
 		status_check: &BlockStatus,
 	) -> Result<DiscardWaitOrReady<Block, Self, Self::Blocked>, Error> {
+		log::trace!(target: "afp", "BlockGlobalMessage::needs_waiting");
 		use std::collections::hash_map::Entry;
 
 		enum KnownOrUnknown<N> {
@@ -438,7 +437,7 @@ impl<Block: BlockT> BlockUntilImported<Block> for BlockGlobalMessage<Block> {
 					// invalid global message: messages targeting wrong number
 					// or at least different from other vote in same global
 					// message.
-					return Ok(false);
+					return Ok(false)
 				}
 
 				Ok(true)
@@ -452,7 +451,7 @@ impl<Block: BlockT> BlockUntilImported<Block> for BlockGlobalMessage<Block> {
 
 					for (target_number, target_hash) in commit_targets {
 						if !query_known(target_hash, target_number)? {
-							return Ok(DiscardWaitOrReady::Discard);
+							return Ok(DiscardWaitOrReady::Discard)
 						}
 					}
 				},
@@ -472,13 +471,14 @@ impl<Block: BlockT> BlockUntilImported<Block> for BlockGlobalMessage<Block> {
 
 					for (target_number, target_hash) in targets {
 						if !query_known(target_hash, target_number)? {
-							return Ok(DiscardWaitOrReady::Discard);
+							return Ok(DiscardWaitOrReady::Discard)
 						}
 					}
 				},
-
-				// TODO:
-				msg => return Ok(DiscardWaitOrReady::Ready(msg)),
+				msg => {
+					log::trace!(target: "afp", "BlockGlobalMessage::needs_waiting: message: {:?}", msg);
+					return Ok(DiscardWaitOrReady::Ready(msg))
+				},
 			};
 		}
 
@@ -493,7 +493,7 @@ impl<Block: BlockT> BlockUntilImported<Block> for BlockGlobalMessage<Block> {
 		if unknown_hashes.is_empty() {
 			// none of the hashes in the global message were unknown.
 			// we can just return the message directly.
-			return Ok(DiscardWaitOrReady::Ready(input));
+			return Ok(DiscardWaitOrReady::Ready(input))
 		}
 
 		let locked_global = Arc::new(Mutex::new(Some(input)));
@@ -520,7 +520,7 @@ impl<Block: BlockT> BlockUntilImported<Block> for BlockGlobalMessage<Block> {
 			// Delete the inner message so it won't ever be forwarded. Future calls to
 			// `wait_completed` on the same `inner` will ignore it.
 			*self.inner.lock() = None;
-			return None;
+			return None
 		}
 
 		match Arc::try_unwrap(self.inner) {
@@ -957,8 +957,8 @@ mod tests {
 		// // waiting_block_2 is still waiting for block 2, thus this should return `None`.
 		// assert!(waiting_block_1.wait_completed(1).is_none());
 		//
-		// // Message only depended on block 1 and 2. Both have been imported, thus this should yield
-		// // the message.
+		// // Message only depended on block 1 and 2. Both have been imported, thus this should
+		// yield // the message.
 		// assert!(waiting_block_2.wait_completed(2).is_some());
 	}
 
@@ -995,8 +995,8 @@ mod tests {
 		// // Drop 'queue' m1.
 		// drop(m1);
 		//
-		// // Make sure m1 cleaned up after itself, removing all messages that were left in its queue
-		// // when dropped from the global metric.
+		// // Make sure m1 cleaned up after itself, removing all messages that were left in its
+		// queue // when dropped from the global metric.
 		// assert_eq!(0, m2.global_waiting_messages.get());
 	}
 }

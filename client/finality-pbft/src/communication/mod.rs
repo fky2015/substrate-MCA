@@ -314,7 +314,7 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 						// check signature.
 						if !voters.contains(&msg.message.id) {
 							debug!(target: "afp", "Skipping message from unknown voter {}", msg.message.id);
-							return future::ready(None);
+							return future::ready(None)
 						}
 
 						if voters.len().get() <= TELEMETRY_VOTERS_LIMIT {
@@ -397,6 +397,7 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 		);
 
 		let topic = global_topic::<B>(set_id.0);
+		log::debug!(target: "afp", "Global topic for incoming_global: {}", topic);
 		let incoming = incoming_global(
 			self.gossip_engine.clone(),
 			topic,
@@ -414,20 +415,6 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 			self.neighbor_sender.clone(),
 			self.telemetry.clone(),
 		);
-
-		// let outgoing = outgoing.with(|out| {
-		// 	// FIXME:: send GlobalMessageOut
-		// 	match out {
-		// 		leader::voter::GlobalMessageOut::Commit(view, commit) => future::ok((view, commit)),
-		// 		_ => {
-		// 			let err = Error::Network(
-		// 				"global outgoing have wring message type [NEED IMPLEMENT]".to_string(),
-		// 			);
-		// 			log::error!(target:  "afp", "{:?}", err);
-		// 			future::err(err)
-		// 		},
-		// 	}
-		// });
 
 		(incoming, outgoing)
 	}
@@ -457,11 +444,10 @@ impl<B: BlockT, N: Network<B>> Future for NetworkBridge<B, N> {
 				Poll::Ready(Some((to, packet))) => {
 					self.gossip_engine.lock().send_message(to, packet.encode());
 				},
-				Poll::Ready(None) => {
+				Poll::Ready(None) =>
 					return Poll::Ready(Err(Error::Network(
 						"Neighbor packet worker stream closed.".into(),
-					)))
-				},
+					))),
 				Poll::Pending => break,
 			}
 		}
@@ -471,19 +457,17 @@ impl<B: BlockT, N: Network<B>> Future for NetworkBridge<B, N> {
 				Poll::Ready(Some(PeerReport { who, cost_benefit })) => {
 					self.gossip_engine.lock().report(who, cost_benefit);
 				},
-				Poll::Ready(None) => {
+				Poll::Ready(None) =>
 					return Poll::Ready(Err(Error::Network(
 						"Gossip validator report stream closed.".into(),
-					)))
-				},
+					))),
 				Poll::Pending => break,
 			}
 		}
 
 		match self.gossip_engine.lock().poll_unpin(cx) {
-			Poll::Ready(()) => {
-				return Poll::Ready(Err(Error::Network("Gossip engine future finished.".into())))
-			},
+			Poll::Ready(()) =>
+				return Poll::Ready(Err(Error::Network("Gossip engine future finished.".into()))),
 			Poll::Pending => {},
 		}
 
@@ -532,7 +516,7 @@ fn incoming_global<B: BlockT>(
 					gossip_engine.lock().report(who, cost);
 				}
 
-				return None;
+				return None
 			}
 
 			let view = msg.view;
@@ -584,7 +568,7 @@ fn incoming_global<B: BlockT>(
 				gossip_engine.lock().report(who, cost);
 			}
 
-			return None;
+			return None
 		}
 
 		let cb = move |outcome| {
@@ -608,6 +592,7 @@ fn incoming_global<B: BlockT>(
 		.lock()
 		.messages_for(topic)
 		.filter_map(|notification| {
+			debug!(target: "afp", "get global message [filter_map 1]");
 			// this could be optimized by decoding piecewise.
 			let decoded = GossipMessage::<B>::decode(&mut &notification.message[..]);
 			if let Err(ref e) = decoded {
@@ -616,12 +601,16 @@ fn incoming_global<B: BlockT>(
 			future::ready(decoded.map(move |d| (notification, d)).ok())
 		})
 		.filter_map(move |(notification, msg)| {
+			debug!(target: "afp", "get global message [filter_map 2]");
 			future::ready(match msg {
-				GossipMessage::Commit(msg) => {
-					process_commit(msg, notification, &gossip_engine, &gossip_validator, &*voters)
-				},
-				GossipMessage::CatchUp(msg) => {
-					process_catch_up(msg, notification, &gossip_engine, &gossip_validator, &*voters)
+				GossipMessage::Commit(msg) =>
+					process_commit(msg, notification, &gossip_engine, &gossip_validator, &*voters),
+				GossipMessage::CatchUp(msg) =>
+					process_catch_up(msg, notification, &gossip_engine, &gossip_validator, &*voters),
+				GossipMessage::Global(msg) => match msg.message {
+					crate::GlobalMessage::ViewChange(vc) =>
+						Some(voter::GlobalMessageIn::ViewChange(vc)),
+					crate::GlobalMessage::Empty => Some(voter::GlobalMessageIn::Empty),
 				},
 				_ => {
 					// TODO: FKY
@@ -683,18 +672,17 @@ impl<Block: BlockT> Sink<Message<Block>> for OutgoingMessages<Block> {
 					*vote = prepare.clone();
 				}
 			},
-			leader::Message::Commit(ref mut vote) => {
+			leader::Message::Commit(ref mut vote) =>
 				if let Some(commit) = self.has_voted.commit() {
 					*vote = commit.clone();
-				}
-			},
+				},
 		}
 
 		// when locals exist, sign messages on import
 		if let Some(ref keystore) = self.keystore {
 			// QUESTION: FKY how does grandpa deal with it if no new block generated.
-			// TODO:     It should still gossip message's, but what contained in it's target_hash and
-			//      target_number?
+			// TODO:     It should still gossip message's, but what contained in it's target_hash
+			// and      target_number?
 			let target_hash = *(msg.target().0);
 			let signed = sp_finality_pbft::sign_message(
 				keystore.keystore(),
@@ -741,7 +729,7 @@ impl<Block: BlockT> Sink<Message<Block>> for OutgoingMessages<Block> {
 			// forward the message to the inner sender.
 			return self.sender.start_send(signed).map_err(|e| {
 				Error::Network(format!("Failed to start_send on channel sender: {:?}", e))
-			});
+			})
 		};
 
 		Ok(())
@@ -772,19 +760,19 @@ fn check_compact_commit<Block: BlockT>(
 	// TODO: refactor
 	// check total len is not out of range.
 	if &msg.auth_data.len() > &voters.len().get() {
-		return Err(cost::MALFORMED_COMMIT);
+		return Err(cost::MALFORMED_COMMIT)
 	}
 
 	for (_, ref id) in &msg.auth_data {
 		if let None = voters.get(id) {
 			debug!(target: "afp", "Skipping commit containing unknown voter {}", id);
-			return Err(cost::MALFORMED_COMMIT);
+			return Err(cost::MALFORMED_COMMIT)
 		}
 	}
 
 	// Super majority.
 	if &msg.auth_data.len() < &voters.threshold() {
-		return Err(cost::MALFORMED_COMMIT);
+		return Err(cost::MALFORMED_COMMIT)
 	}
 
 	// check signatures on all contained precommits.
@@ -815,7 +803,7 @@ fn check_compact_commit<Block: BlockT>(
 			}
 			.cost();
 
-			return Err(cost);
+			return Err(cost)
 		}
 	}
 
@@ -841,18 +829,18 @@ fn check_catch_up<Block: BlockT>(
 	) -> Result<(), ReputationChange> {
 		// Super majority.
 		if msgs_len < threshold {
-			return Err(cost::MALFORMED_CATCH_UP);
+			return Err(cost::MALFORMED_CATCH_UP)
 		}
 
 		// check total len is not out of range.
 		if msgs_len > full_len {
-			return Err(cost::MALFORMED_CATCH_UP);
+			return Err(cost::MALFORMED_CATCH_UP)
 		}
 
 		for id in msgs {
 			if let None = voters.get(&id) {
 				debug!(target: "afp", "Skipping catch up message containing unknown voter {}", id);
-				return Err(cost::MALFORMED_CATCH_UP);
+				return Err(cost::MALFORMED_CATCH_UP)
 			}
 		}
 
@@ -908,7 +896,7 @@ fn check_catch_up<Block: BlockT>(
 				}
 				.cost();
 
-				return Err(cost);
+				return Err(cost)
 			}
 		}
 
@@ -964,6 +952,7 @@ impl<Block: BlockT> GlobalMessagesOut<Block> {
 		neighbor_sender: periodic::NeighborPacketSender<Block>,
 		telemetry: Option<TelemetryHandle>,
 	) -> Self {
+		log::debug!(target: "afp", "GlobalMessagesOut::new is_voter: {}", is_voter);
 		GlobalMessagesOut {
 			network,
 			set_id: SetId(set_id),
@@ -986,11 +975,10 @@ impl<Block: BlockT> Sink<GlobalCommunicationOut<Block>> for GlobalMessagesOut<Bl
 
 	fn start_send(
 		self: Pin<&mut Self>,
-		// FIXME:
 		input: GlobalCommunicationOut<Block>,
 	) -> Result<(), Self::Error> {
 		if !self.is_voter {
-			return Ok(());
+			return Ok(())
 		}
 
 		let message = match input {
@@ -1034,12 +1022,11 @@ impl<Block: BlockT> Sink<GlobalCommunicationOut<Block>> for GlobalMessagesOut<Bl
 
 				message
 			},
-			voter::GlobalMessageOut::ViewChange(view_change) => {
+			voter::GlobalMessageOut::ViewChange(view_change) =>
 				GossipMessage::Global(gossip::GlobalMessage {
 					set_id: self.set_id,
 					message: crate::GlobalMessage::ViewChange(view_change),
-				})
-			},
+				}),
 			voter::GlobalMessageOut::Empty => GossipMessage::Global(gossip::GlobalMessage {
 				set_id: self.set_id,
 				message: crate::GlobalMessage::Empty,
@@ -1047,6 +1034,8 @@ impl<Block: BlockT> Sink<GlobalCommunicationOut<Block>> for GlobalMessagesOut<Bl
 		};
 
 		let topic = global_topic::<Block>(self.set_id.0);
+
+		log::debug!(target: "afp", "set_id: {:?}, topic: {:?}, global message: {:?}",self.set_id, topic ,message, );
 
 		self.network.lock().gossip_message(topic, message.encode(), false);
 
