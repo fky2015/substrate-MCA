@@ -1,7 +1,7 @@
 #!/bin/bash
 
 SLEEP=${SLEEP:-30}
-LOG_LEVEL=${RUST_LOG:-afp=info}
+LOG_LEVEL=${LOG_LEVEL:-afp=info}
 
 RUST_LOG=$LOG_LEVEL ./target/debug/node-template --alice --tmp --node-key 0000000000000000000000000000000000000000000000000000000000000001 --port 30334 2>&1 | tee alice.log &
 THREAD_1=$!
