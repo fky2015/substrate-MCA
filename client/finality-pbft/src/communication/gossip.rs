@@ -821,7 +821,7 @@ impl<Block: BlockT> Inner<Block> {
 		}
 
 		let topic = super::view_topic::<Block>(full.view.0, full.set_id.0);
-		Action::Keep(topic, benefit::ROUND_MESSAGE)
+		Action::ProcessAndDiscard(topic, benefit::ROUND_MESSAGE)
 	}
 
 	fn validate_commit_message(
