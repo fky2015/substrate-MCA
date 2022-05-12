@@ -72,7 +72,7 @@ struct PeerView<N> {
 
 impl<N> Default for PeerView<N> {
 	fn default() -> Self {
-		PeerView { view: View(1), set_id: SetId(0), last_commit: None }
+		PeerView { view: View(0), set_id: SetId(0), last_commit: None }
 	}
 }
 
