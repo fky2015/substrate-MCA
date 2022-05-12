@@ -19,8 +19,7 @@ use finality_grandpa::{
 	leader::{self, Error as PbftError, State as ViewState, VoterSet},
 	BlockNumberOps,
 };
-use futures::prelude::*;
-use futures::{Future, Sink, Stream};
+use futures::{prelude::*, Future, Sink, Stream};
 use log::{debug, warn};
 use parity_scale_codec::{Decode, Encode};
 use parking_lot::RwLock;
@@ -149,13 +148,12 @@ where
 		let local_id = local_authority_id(&self.voters, self.config.keystore.as_ref());
 
 		let has_voted = match self.voter_set_state.has_voted(view) {
-			HasVoted::Yes(id, vote) => {
+			HasVoted::Yes(id, vote) =>
 				if local_id.as_ref().map(|k| k == &id).unwrap_or(false) {
 					HasVoted::Yes(id, vote)
 				} else {
 					HasVoted::No
-				}
-			},
+				},
 			HasVoted::No => HasVoted::No,
 		};
 
@@ -214,10 +212,10 @@ where
 			//       before activating the new set. the `authority_set` is updated immediately thus
 			//       we restrict the voter based on that.
 			if set_id != authority_set.set_id() {
-				return Ok(None);
+				return Ok(None)
 			}
 
-            // FIXME: error
+			// FIXME: error
 			next_target(block, client, authority_set, select_chain)
 				.await
 				.map_err(|e| e.into())
@@ -265,7 +263,7 @@ where
 				block,
 			);
 
-			return Ok(None);
+			return Ok(None)
 		},
 	};
 
@@ -285,7 +283,7 @@ where
 
 				// walk backwards until we find the target block
 				loop {
-					if base_header.number() < parent_header.number() {
+					if parent_header.number() < base_header.number() {
 						unreachable!(
 							"we are traversing backwards from a known block; \
                          blocks are stored contiguously; \
@@ -294,7 +292,7 @@ where
 					}
 
 					if base_header.number() == parent_header.number() {
-						break;
+						break
 					}
 
 					target_header = client
@@ -342,8 +340,8 @@ impl<Block: BlockT> HasVoted<Block> {
 	pub fn pre_prepare(&self) -> Option<&PrePrepare<Block>> {
 		match self {
 			HasVoted::Yes(_, Vote::PrePrepare(propose)) => Some(propose),
-			HasVoted::Yes(_, Vote::Prepare(propose, _))
-			| HasVoted::Yes(_, Vote::Commit(propose, _, _)) => propose.as_ref(),
+			HasVoted::Yes(_, Vote::Prepare(propose, _)) |
+			HasVoted::Yes(_, Vote::Commit(propose, _, _)) => propose.as_ref(),
 			_ => None,
 		}
 	}
@@ -351,8 +349,8 @@ impl<Block: BlockT> HasVoted<Block> {
 	/// Returns the prevote we should vote with (if any.)
 	pub fn prepare(&self) -> Option<&Prepare<Block>> {
 		match self {
-			HasVoted::Yes(_, Vote::Prepare(_, prepare))
-			| HasVoted::Yes(_, Vote::Commit(_, prepare, _)) => Some(prepare),
+			HasVoted::Yes(_, Vote::Prepare(_, prepare)) |
+			HasVoted::Yes(_, Vote::Commit(_, prepare, _)) => Some(prepare),
 			_ => None,
 		}
 	}
@@ -722,7 +720,7 @@ where
 				status.finalized_number,
 		);
 
-		return Ok(());
+		return Ok(())
 	}
 
 	// FIXME #1483: clone only when changed
@@ -770,10 +768,10 @@ where
 				if !justification_required {
 					if let Some(justification_period) = justification_period {
 						let last_finalized_number = client.info().finalized_number;
-						justification_required = (!last_finalized_number.is_zero()
-							|| number - last_finalized_number == justification_period)
-							&& (last_finalized_number / justification_period
-								!= number / justification_period);
+						justification_required = (!last_finalized_number.is_zero() ||
+							number - last_finalized_number == justification_period) &&
+							(last_finalized_number / justification_period !=
+								number / justification_period);
 					}
 				}
 
@@ -856,7 +854,7 @@ where
 				warn!(target: "afp", "Failed to write updated authority set to disk. Bailing.");
 				warn!(target: "afp", "Node is in a potentially inconsistent state.");
 
-				return Err(e.into());
+				return Err(e.into())
 			}
 		}
 
