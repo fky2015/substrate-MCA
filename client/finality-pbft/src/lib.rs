@@ -558,7 +558,7 @@ where
 					(*self.env.voters).clone(),
 					global_comms,
 					last_completed_view.number,
-					(last_completed_view.base.1, last_completed_view.base.0),
+                    last_completed_view.base,
 				);
 
 				// Repoint shared_voter_state so that the RPC endpoint can query the state

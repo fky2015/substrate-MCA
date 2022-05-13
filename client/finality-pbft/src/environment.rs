@@ -35,6 +35,15 @@ use sp_runtime::{
 	traits::{Block as BlockT, Header as HeaderT, NumberFor, Zero},
 };
 
+type SignedCommit<Block> = leader::SignedCommit<
+	NumberFor<Block>,
+	<Block as BlockT>::Hash,
+	AuthoritySignature,
+	AuthorityId,
+>;
+
+type HistoricalVotes<Block> = Vec<SignedCommit<Block>>;
+
 /// The environment we run PBFT in.
 pub(crate) struct Environment<Backend, Block: BlockT, C, N: NetworkT<Block>, SC> {
 	pub(crate) client: Arc<C>,
@@ -222,6 +231,50 @@ where
 		})
 	}
 
+	fn complete_f_commit(
+		&self,
+		view: u64,
+		state: ViewState<Self::Number, Self::Hash>,
+		base: (Self::Number, Self::Hash),
+		f_commit: leader::FinalizedCommit<Self::Number, Self::Hash, Self::Signature, Self::Id>,
+	) -> Result<(), Self::Error> {
+		self.update_voter_set_state(|voter_set_state| {
+			let (completed_views, current_views) =
+				if let VoterSetState::Live { completed_views, current_views } = voter_set_state {
+					(completed_views, current_views)
+				} else {
+					let msg = "Voter acting while in paused state.";
+					return Err(Error::Safety(msg.to_string()))
+				};
+
+			let mut completed_views = completed_views.clone();
+			let mut current_views = current_views.clone();
+
+			let votes = f_commit.commits;
+
+			if let Some(_current_view) = current_views.get(&view) {
+				// Currently, we don't have to use `CurrentViews`
+			} else {
+				current_views.insert(view, HasVoted::No);
+				// Remove previews view if higher view present.
+				current_views.remove(&(view - 1));
+			}
+
+			completed_views.push(CompletedView { number: view, state: state.clone(), base, votes });
+
+			let set_state = VoterSetState::<Block>::Live {
+				completed_views,
+				current_views: current_views.clone(),
+			};
+
+			crate::aux_schema::write_voter_set_state(&*self.client, &set_state)?;
+
+			Ok(Some(set_state))
+		})?;
+
+		Ok(())
+	}
+
 	fn finalize_block(
 		&self,
 		view: u64,
@@ -390,11 +443,11 @@ pub struct CompletedView<Block: BlockT> {
 	/// The view number.
 	pub number: ViewNumber,
 	/// The view state (prevote ghost, estimate, finalized, etc.)
-	pub state: ViewState<Block::Hash, NumberFor<Block>>,
+	pub state: ViewState<NumberFor<Block>, Block::Hash>,
 	/// The target block base used for voting in the view.
-	pub base: (Block::Hash, NumberFor<Block>),
+	pub base: (NumberFor<Block>, Block::Hash),
 	/// All the votes observed in the view.
-	pub votes: Vec<SignedMessage<Block>>,
+	pub votes: Vec<SignedCommit<Block>>,
 }
 
 // Data about last completed views within a single voter set. Stores
@@ -508,12 +561,12 @@ impl<Block: BlockT> VoterSetState<Block> {
 		authority_set: &AuthoritySet<Block::Hash, NumberFor<Block>>,
 		genesis_state: (Block::Hash, NumberFor<Block>),
 	) -> VoterSetState<Block> {
-		let state = ViewState::genesis((genesis_state.0, genesis_state.1));
+		let state = ViewState::genesis((genesis_state.1, genesis_state.0));
 		let completed_views = CompletedViews::new(
 			CompletedView {
 				number: 0,
 				state,
-				base: (genesis_state.0, genesis_state.1),
+				base: (genesis_state.1, genesis_state.0),
 				votes: Vec::new(),
 			},
 			set_id,

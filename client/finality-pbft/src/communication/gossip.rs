@@ -27,7 +27,7 @@ const CATCH_UP_REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
 const CATCH_UP_PROCESS_TIMEOUT: Duration = Duration::from_secs(30);
 /// Maximum number of rounds we are behind a peer before issuing a
 /// catch up request.
-const CATCH_UP_THRESHOLD: u64 = 2;
+const CATCH_UP_THRESHOLD: u64 = 0;
 
 /// The total round duration measured in periods of gossip duration:
 /// 2 gossip durations for prevote timer
@@ -889,11 +889,13 @@ impl<Block: BlockT> Inner<Block> {
 					return Action::Discard(cost::MALFORMED_CATCH_UP)
 				}
 
-				if request.view.0 > full.message.view_number {
-					return Action::Discard(cost::MALFORMED_CATCH_UP)
-				}
+				log::trace!(target: "afp", "full: {:?}", full.message);
+				// if request.view.0 > full.message.view_number {
+				//                 log::trace!(target: "afp", "full: {:?}", full.message);
+				// 	return Action::Discard(cost::MALFORMED_CATCH_UP)
+				// }
 
-				if full.message.prepares.is_empty() || full.message.commits.is_empty() {
+				if full.message.commits.is_empty() {
 					return Action::Discard(cost::MALFORMED_CATCH_UP)
 				}
 
@@ -928,6 +930,7 @@ impl<Block: BlockT> Inner<Block> {
 		request: CatchUpRequestMessage,
 		set_state: &environment::SharedVoterSetState<Block>,
 	) -> (Option<GossipMessage<Block>>, Action<Block::Hash>) {
+		trace!(target: "afp", "handle_catch_up_request");
 		let local_view = match self.local_view {
 			None => return (None, Action::Discard(Misbehavior::OutOfScopeMessage.cost())),
 			Some(ref view) => view,
@@ -946,13 +949,19 @@ impl<Block: BlockT> Inner<Block> {
 
 			return (None, Action::Discard(Misbehavior::OutOfScopeMessage.cost()))
 		}
+		trace!(target: "afp", "handle_catch_up_request phase 2");
 
 		match self.peers.peer(who) {
 			None => return (None, Action::Discard(Misbehavior::OutOfScopeMessage.cost())),
-			Some(peer) if peer.view.view >= request.view =>
-				return (None, Action::Discard(Misbehavior::OutOfScopeMessage.cost())),
+			// NOTE: we change >= to > because when view_change,
+			// a lost-behind node may in view 0, and we are in view 1.
+			Some(peer) if peer.view.view > request.view => {
+				trace!(target: "afp", "handle_catch_up_request phase {:?} {:?}", peer.view.view, request.view);
+				return (None, Action::Discard(Misbehavior::OutOfScopeMessage.cost()))
+			},
 			_ => {},
 		}
+		trace!(target: "afp", "handle_catch_up_request phase 3");
 
 		let last_completed_view = set_state.read().last_completed_view();
 		if last_completed_view.number < request.view.0 {
@@ -965,35 +974,21 @@ impl<Block: BlockT> Inner<Block> {
 			last_completed_view.number,
 		);
 
+		// TODO: remove this.
 		let mut prepares = Vec::new();
+
 		let mut commits = Vec::new();
+
+		trace!(target: "afp", "handle_catch_up_request votes {:?}", last_completed_view.votes);
 
 		// NOTE: the set of votes stored in `LastCompletedView` is a minimal
 		// set of votes, i.e. at most one equivocation is stored per voter. The
 		// code below assumes this invariant is maintained when creating the
 		// catch up reply since peers won't accept catch-up messages that have
 		// too many equivocations (we exceed the fault-tolerance bound).
-		for vote in last_completed_view.votes {
-			match vote.message {
-				leader::Message::Prepare(prepare) => {
-					prepares.push(leader::SignedPrepare {
-						prepare,
-						signature: vote.signature,
-						id: vote.id,
-					});
-				},
-				leader::Message::Commit(commit) => {
-					commits.push(leader::SignedCommit {
-						commit,
-						signature: vote.signature,
-						id: vote.id,
-					});
-				},
-				_ => {},
-			}
-		}
+		commits = last_completed_view.votes.clone();
 
-		let (base_hash, base_number) = last_completed_view.base;
+		let (base_number, base_hash) = last_completed_view.base;
 
 		let catch_up = CatchUp::<Block> {
 			view_number: last_completed_view.number,
@@ -1012,6 +1007,7 @@ impl<Block: BlockT> Inner<Block> {
 	}
 
 	fn try_catch_up(&mut self, who: &PeerId) -> (Option<GossipMessage<Block>>, Option<Report>) {
+		log::trace!(target: "afp", "try_catch_up from {:?}", who);
 		let mut catch_up = None;
 		let mut report = None;
 
@@ -1021,6 +1017,8 @@ impl<Block: BlockT> Inner<Block> {
 		// won't be able to reply since they don't follow the full GRANDPA
 		// protocol and therefore might not have the vote data available.
 		if let (Some(peer), Some(local_view)) = (self.peers.peer(who), &self.local_view) {
+			log::trace!(target: "afp", "try_catch_up peer: {:?}, local_view: {:?}", peer, local_view.view);
+			log::trace!(target: "afp", "try_catch_up {} [{:?} {:?}] [{:?} {:?}]", self.catch_up_config.request_allowed(&peer), peer.view.set_id, local_view.set_id, peer.view.view.0.saturating_sub(CATCH_UP_THRESHOLD), local_view.view.0 );
 			if self.catch_up_config.request_allowed(&peer) &&
 				peer.view.set_id == local_view.set_id &&
 				peer.view.view.0.saturating_sub(CATCH_UP_THRESHOLD) > local_view.view.0
@@ -1028,6 +1026,8 @@ impl<Block: BlockT> Inner<Block> {
 				// send catch up request if allowed
 				let view = peer.view.view.0 - 1; // peer.view.view is > 0
 				let request = CatchUpRequestMessage { set_id: peer.view.set_id, view: View(view) };
+
+				log::trace!(target: "afp", "try_catch_up sending request: {:?}", request);
 
 				let (catch_up_allowed, catch_up_report) = self.note_catch_up_request(who, &request);
 
@@ -1044,6 +1044,7 @@ impl<Block: BlockT> Inner<Block> {
 			}
 		}
 
+		log::trace!(target: "afp", "try_catch_up end with catch_up: {:?}", catch_up);
 		(catch_up, report)
 	}
 
@@ -1537,12 +1538,15 @@ impl<Block: BlockT> sc_network_gossip::Validator<Block> for GossipValidator<Bloc
 				},
 				Ok(GossipMessage::Global(msg)) => {
 					log::debug!(target:"afp", "global message in not_allowed: {:?}", msg);
-                    // TODO: consider filtering it further.
+					// TODO: consider filtering it further.
 					true
 				},
 				Ok(GossipMessage::Neighbor(_)) => false,
 				Ok(GossipMessage::CatchUpRequest(_)) => false,
-				Ok(GossipMessage::CatchUp(_)) => false,
+				Ok(GossipMessage::CatchUp(msg)) => {
+					log::trace!(target:"afp", "catch-up message in not_allowed: {:?}", msg);
+					false
+				},
 				Ok(GossipMessage::Vote(_)) => false, // should not be the case.
 			}
 		})

@@ -65,7 +65,7 @@ mod cost {
 	use sc_network::ReputationChange as Rep;
 	pub(super) const PAST_REJECTION: Rep = Rep::new(-50, "Grandpa: Past message");
 	pub(super) const BAD_SIGNATURE: Rep = Rep::new(-100, "Grandpa: Bad signature");
-	pub(super) const MALFORMED_CATCH_UP: Rep = Rep::new(-1000, "Grandpa: Malformed cath-up");
+	pub(super) const MALFORMED_CATCH_UP: Rep = Rep::new(-1000, "Grandpa: Malformed catch-up");
 	pub(super) const MALFORMED_COMMIT: Rep = Rep::new(-1000, "Grandpa: Malformed commit");
 	pub(super) const FUTURE_MESSAGE: Rep = Rep::new(-500, "Grandpa: Future message");
 	pub(super) const UNKNOWN_VOTER: Rep = Rep::new(-150, "Grandpa: Unknown voter");
@@ -234,7 +234,7 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 
 				for signed in view.votes.iter() {
 					let message = gossip::GossipMessage::Vote(gossip::VoteMessage::<B> {
-						message: signed.clone(),
+						message: signed.clone().into(),
 						view: View(view.number),
 						set_id: SetId(set_id),
 					});
@@ -562,6 +562,8 @@ fn incoming_global<B: BlockT>(
 		let gossip_validator = gossip_validator.clone();
 		let gossip_engine = gossip_engine.clone();
 
+        log::debug!(target: "afp", "process_catch_up");
+
 		if let Err(cost) = check_catch_up::<B>(&msg.message, voters, msg.set_id, telemetry.clone())
 		{
 			if let Some(who) = notification.sender {
@@ -847,13 +849,13 @@ fn check_catch_up<Block: BlockT>(
 		Ok(())
 	}
 
-	check_len(
-		voters,
-		voters.threshold(),
-		msg.prepares.len(),
-		msg.prepares.iter().map(|vote| &vote.id),
-		full_len,
-	)?;
+	// check_len(
+	// 	voters,
+	// 	voters.threshold(),
+	// 	msg.prepares.len(),
+	// 	msg.prepares.iter().map(|vote| &vote.id),
+	// 	full_len,
+	// )?;
 
 	check_len(
 		voters,
