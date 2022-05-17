@@ -330,6 +330,12 @@ pub trait SimpleSlotWorker<B: BlockT> {
 			},
 		};
 
+		// NOTE: skip empty block
+		// if proposal.block.extrinsics().len() <= 1 {
+		// 	debug!(target:"afp", "skip empty block");
+		// 	return None
+		// }
+
 		let (block, storage_proof) = (proposal.block, proposal.proof);
 		let (header, body) = block.deconstruct();
 		let header_num = *header.number();
