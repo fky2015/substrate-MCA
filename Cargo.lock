@@ -5980,7 +5980,7 @@ dependencies = [
  "frame-election-provider-support",
  "frame-support",
  "frame-system",
- "log 0.4.14",
+ "log",
  "pallet-authorship",
  "pallet-balances",
  "pallet-offences",
