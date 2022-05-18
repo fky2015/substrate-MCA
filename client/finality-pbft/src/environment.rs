@@ -256,8 +256,10 @@ where
 				// Currently, we don't have to use `CurrentViews`
 			} else {
 				current_views.insert(view, HasVoted::No);
-				// Remove previews view if higher view present.
-				current_views.remove(&(view - 1));
+				if view >= 1 {
+					// Remove previews view if higher view present.
+					current_views.remove(&(view - 1));
+				}
 			}
 
 			completed_views.push(CompletedView { number: view, state: state.clone(), base, votes });
