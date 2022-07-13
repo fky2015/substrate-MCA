@@ -1,3 +1,47 @@
+# Substrate with PBFT
+
+This repo implement PBFT as an alternative to GRANDPA.
+
+## Usage
+
+1. [Setup Rust](https://docs.substrate.io/main-docs/install/). Add `nightly` toolchain and `wasm` target.
+2. Clone repos. (Under the same folder)
+
+```bash
+git clone https://github.com/fky2015/finality-pbft.git
+git clone https://github.com/fky2015/substrate-with-pBFT
+```
+
+3. Build.
+
+```bash
+cd substrate-with-pBFT
+cargo build -p node-template
+```
+
+4. Run node.
+
+```bash
+./target/debug/node-template --dev --tmp
+```
+
+## Test script
+
+Test scripts are in the `./pbft-test-scripts`.
+Run from project root dir such as `bash ./pbft-test-scripts/single.sh`.
+
+## Info
+
+There is a substrate-contracts-node campatible version [substrate-contracts-node-with-pBFT](https://github.com/fky2015/substrate-contracts-node-with-pBFT).
+
+This is campatible to [Substrate May 12th, 2022](https://github.com/paritytech/substrate/commit/7d233c2446b5a60662400a0a4bcfb78bb3b79ff7).
+
+For the PBFT implementation details, please visit [finality-pbft](https://github.com/fky2015/finality-pbft).
+
+*In below is the origin README.*
+
+---
+
 # Substrate &middot; [![GitHub license](https://img.shields.io/badge/license-GPL3%2FApache2-blue)](#LICENSE) [![GitLab Status](https://gitlab.parity.io/parity/substrate/badges/master/pipeline.svg)](https://gitlab.parity.io/parity/substrate/pipelines) [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](docs/CONTRIBUTING.adoc) [![Matrix](https://img.shields.io/matrix/substrate-technical:matrix.org)](https://matrix.to/#/#substrate-technical:matrix.org)
 
 <p align="center">
