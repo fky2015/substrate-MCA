@@ -110,6 +110,7 @@ members = [
 	"frame/node-authorization",
 	"frame/offences",
   "frame/pbft",
+  "frame/tendermint",
 	"frame/preimage",
 	"frame/proxy",
 	"frame/nomination-pools",
@@ -228,6 +229,11 @@ members = [
 	"utils/wasm-builder",
   "primitives/finality-pbft",
   "client/finality-pbft",
+  "primitives/finality-tendermint",
+  "client/finality-tendermint",
+	"bin/node-tendermint/node",
+	"bin/node-tendermint/pallets/template",
+	"bin/node-tendermint/runtime",
 ]
 
 # The list of dependencies below (which can be both direct and indirect dependencies) are crates
@@ -307,3 +313,4 @@ codegen-units = 1
 
 [patch.crates-io]
 finality-grandpa = { path = "../leader-consensus" }
+finality-tendermint = { path = "../finality-tendermint" }

@@ -128,6 +128,8 @@ pub struct Configuration {
 	pub disable_grandpa: bool,
     /// Disable PBFT when running in validator mode
     pub disable_pbft: bool,
+    /// Disable Tendermint when running in validator mode
+    pub disable_tendermint: bool,
 	/// Development key seed.
 	///
 	/// When running in development mode, the seed will be used to generate authority keys by the

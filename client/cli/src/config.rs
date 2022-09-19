@@ -432,6 +432,13 @@ pub trait CliConfiguration<DCV: DefaultConfigurationValues = ()>: Sized {
 		Ok(Default::default())
 	}
 
+	/// Returns `Ok(true)` if pbft should be disabled
+	/// 
+	/// By default this is `false`.
+	fn disable_tendermint(&self) -> Result<bool> {
+		Ok(Default::default())
+	}
+
 	/// Get the development key seed from the current object
 	///
 	/// By default this is `None`.
@@ -556,6 +563,7 @@ pub trait CliConfiguration<DCV: DefaultConfigurationValues = ()>: Sized {
 			force_authoring: self.force_authoring()?,
 			disable_grandpa: self.disable_grandpa()?,
 			disable_pbft: self.disable_pbft()?,
+            disable_tendermint: self.disable_tendermint()?,
 			dev_key_seed: self.dev_key_seed(is_dev)?,
 			tracing_targets: self.tracing_targets()?,
 			tracing_receiver: self.tracing_receiver()?,
