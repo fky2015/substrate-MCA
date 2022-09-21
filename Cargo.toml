@@ -312,5 +312,5 @@ lto = "fat"
 codegen-units = 1
 
 [patch.crates-io]
-finality-grandpa = { path = "../leader-consensus" }
+finality-grandpa = { path = "../finality-pbft" }
 finality-tendermint = { path = "../finality-tendermint" }
