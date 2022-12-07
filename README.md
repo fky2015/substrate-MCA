@@ -1,6 +1,6 @@
 # Substrate with PBFT
 
-This repo implement PBFT as an alternative to GRANDPA.
+This repo implement PBFT and Tendermint as alternatives to GRANDPA.
 
 ## Usage
 
@@ -9,25 +9,30 @@ This repo implement PBFT as an alternative to GRANDPA.
 
 ```bash
 git clone https://github.com/fky2015/finality-pbft.git
-git clone https://github.com/fky2015/substrate-with-pBFT
+git clone https://github.com/fky2015/substrate-with-pBFT-and-tendermint.git
 ```
 
 3. Build.
 
 ```bash
-cd substrate-with-pBFT
+cd substrate-with-pBFT-and-tendermint
+# build PBFT node
 cargo build -p node-template
+# build Tendermint node
+cargo build -p node-tendermint
 ```
 
 4. Run node.
 
 ```bash
 ./target/debug/node-template --dev --tmp
+# or
+./target/debug/node-tendermint --dev --tmp
 ```
 
 ## Test script
 
-Test scripts are in the `./pbft-test-scripts`.
+Test scripts are in the `./pbft-test-scripts/` and `./tendermint-test-scripts/`.
 Run from project root dir such as `bash ./pbft-test-scripts/single.sh`.
 
 ## Info
