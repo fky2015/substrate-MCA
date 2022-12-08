@@ -8,20 +8,20 @@ This repo implement PBFT and Tendermint as alternatives to GRANDPA.
 2. Clone repos. (Under the same folder)
 
 ```bash
-git clone https://github.com/fky2015/finality-tendermint.git
-git clone https://github.com/fky2015/finality-pbft.git
-git clone https://github.com/fky2015/substrate-with-pBFT-and-tendermint.git
+git clone https://github.com/bit-substrate/finality-tendermint.git
+git clone https://github.com/bit-substrate/finality-pbft.git
+git clone https://github.com/bit-substrate/bit-substrate.git
 ```
 
-> NOTE: To build `cargo b --bin node-template`, you need `finality-pbft & substrate-with-pBFT-and-tendermint`.
-> To build `cargo b --bin node-tendermint`, you need `finality-tendermint & substrate-with-pBFT-and-tendermint`.
+> NOTE: To build `cargo b --bin node-template`, you need `finality-pbft & bit-substrate`.
+> To build `cargo b --bin node-tendermint`, you need `finality-tendermint & bit-substrate`.
 > 
 > Place them under the same directory.
 
 3. Build.
 
 ```bash
-cd substrate-with-pBFT-and-tendermint
+cd bit-substrate
 # build PBFT node
 cargo build -p node-template
 # build Tendermint node
@@ -43,7 +43,7 @@ Run from project root dir such as `bash ./pbft-test-scripts/single.sh`.
 
 ## Info
 
-There is a substrate-contracts-node campatible version [substrate-contracts-node-with-pBFT][substrate].
+There is a substrate-contracts-node campatible version [bit-substrate-contracts-node][substrate].
 
 This is campatible to [Substrate May 12th, 2022](https://github.com/paritytech/substrate/commit/7d233c2446b5a60662400a0a4bcfb78bb3b79ff7).
 
@@ -52,9 +52,9 @@ For the Tendermint implementation details, please visit [finality-tendermint][te
 
 *In below is the origin README.*
 
-[substrate]: https://github.com/fky2015/substrate-contracts-node-with-pBFT
-[pbft]: https://github.com/fky2015/finality-pbft
-[tendermint]: https://github.com/fky2015/finality-tendermint
+[substrate]: https://github.com/bit-substrate/bit-substrate-contracts-node
+[pbft]: https://github.com/bit-substrate/finality-pbft
+[tendermint]: https://github.com/bit-substrate/finality-tendermint
 
 ---
 
