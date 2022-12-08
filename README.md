@@ -8,9 +8,15 @@ This repo implement PBFT and Tendermint as alternatives to GRANDPA.
 2. Clone repos. (Under the same folder)
 
 ```bash
+git clone https://github.com/fky2015/finality-tendermint.git
 git clone https://github.com/fky2015/finality-pbft.git
 git clone https://github.com/fky2015/substrate-with-pBFT-and-tendermint.git
 ```
+
+> NOTE: To build `cargo b --bin node-template`, you need `finality-pbft & substrate-with-pBFT-and-tendermint`.
+> To build `cargo b --bin node-tendermint`, you need `finality-tendermint & substrate-with-pBFT-and-tendermint`.
+> 
+> Place them under the same directory.
 
 3. Build.
 
@@ -37,13 +43,18 @@ Run from project root dir such as `bash ./pbft-test-scripts/single.sh`.
 
 ## Info
 
-There is a substrate-contracts-node campatible version [substrate-contracts-node-with-pBFT](https://github.com/fky2015/substrate-contracts-node-with-pBFT).
+There is a substrate-contracts-node campatible version [substrate-contracts-node-with-pBFT][substrate].
 
 This is campatible to [Substrate May 12th, 2022](https://github.com/paritytech/substrate/commit/7d233c2446b5a60662400a0a4bcfb78bb3b79ff7).
 
-For the PBFT implementation details, please visit [finality-pbft](https://github.com/fky2015/finality-pbft).
+For the PBFT implementation details, please visit [finality-pbft][pbft].
+For the Tendermint implementation details, please visit [finality-tendermint][tendermint]
 
 *In below is the origin README.*
+
+[substrate]: https://github.com/fky2015/substrate-contracts-node-with-pBFT
+[pbft]: https://github.com/fky2015/finality-pbft
+[tendermint]: https://github.com/fky2015/finality-tendermint
 
 ---
 
