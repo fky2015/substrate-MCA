@@ -234,6 +234,14 @@ members = [
 	"bin/node-tendermint/node",
 	"bin/node-tendermint/pallets/template",
 	"bin/node-tendermint/runtime",
+  # For Jasmine.
+  # "primitives/finality-jasmine",
+ #  "frame/jasmine",
+ #  "client/consensus/events",
+ #  "client/finality-jasmine",
+	# "bin/node-jasmine/node",
+	# "bin/node-jasmine/pallets/template",
+	# "bin/node-jasmine/runtime",
 ]
 
 # The list of dependencies below (which can be both direct and indirect dependencies) are crates
@@ -314,3 +322,4 @@ codegen-units = 1
 [patch.crates-io]
 finality-grandpa = { path = "../finality-pbft" }
 finality-tendermint = { path = "../finality-tendermint" }
+finality-jasmine = { path = "../finality-jasmine" }

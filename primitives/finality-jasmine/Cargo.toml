@@ -1,0 +1,42 @@
+[package]
+name = "sp-finality-jasmine"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+
+codec = { package = "parity-scale-codec", version = "3.0.0", default-features = false, features = [
+  "derive",
+] }
+scale-info = { version = "2.0.0", default-features = false, features = [
+  "derive",
+] }
+finality-jasmine = { package = "finality-jasmine", version = "0.1.0", default-features = false, features = [
+  "derive-codec",
+] }
+log = { version = "0.4", optional = true }
+serde = { version = "1", optional = true, features = ["derive"] }
+sp-api = { version = "4.0.0-dev", default-features = false, path = "../api" }
+sp-application-crypto = { version = "6.0.0", default-features = false, path = "../application-crypto" }
+sp-core = { version = "6.0.0", default-features = false, path = "../core" }
+sp-keystore = { version = "0.12.0", default-features = false, path = "../keystore", optional = true }
+sp-runtime = { version = "6.0.0", default-features = false, path = "../runtime" }
+sp-std = { version = "4.0.0", default-features = false, path = "../std" }
+
+[features]
+default = ["std"]
+std = [
+  "log",
+  "serde",
+  "codec/std",
+  "scale-info/std",
+  "finality-jasmine/std",
+  "sp-api/std",
+  "sp-application-crypto/std",
+  "sp-core/std",
+  "sp-keystore",
+  "sp-runtime/std",
+  "sp-std/std",
+]
