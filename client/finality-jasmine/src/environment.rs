@@ -13,7 +13,7 @@ use crate::{
 	notification::JasmineJustificationSender,
 	until_imported::UntilVoteTargetImported,
 	ClientForJasmine, CommandOrError, Commit, Config, Error, FinalizedCommit, NewAuthoritySet,
-	PrePrepare, Prepare, SignedMessage, VoterCommand,
+	Propose, Vote, SignedMessage, VoterCommand,
 };
 use finality_jasmine::{
 	leader::{self, Error as JasmineError, State as ViewState, VoterSet},
@@ -383,54 +383,37 @@ pub enum HasVoted<Block: BlockT> {
 #[derive(Debug, Clone, Decode, Encode, PartialEq)]
 pub enum Vote<Block: BlockT> {
 	/// Has cast a proposal.
-	PrePrepare(PrePrepare<Block>),
-	/// Has cast a prevote.
-	Prepare(Option<PrePrepare<Block>>, Prepare<Block>),
-	/// Has cast a precommit (implies prevote.)
-	Commit(Option<PrePrepare<Block>>, Prepare<Block>, Commit<Block>),
+	Propose(Propose<Block>),
+	/// Has cast a vote.
+	Vote(Option<Propose<Block>>, Vote<Block>),
 }
 
 impl<Block: BlockT> HasVoted<Block> {
 	/// Returns the proposal we should vote with (if any.)
-	pub fn pre_prepare(&self) -> Option<&PrePrepare<Block>> {
+	pub fn propose(&self) -> Option<&PrePrepare<Block>> {
 		match self {
 			HasVoted::Yes(_, Vote::PrePrepare(propose)) => Some(propose),
-			HasVoted::Yes(_, Vote::Prepare(propose, _)) |
-			HasVoted::Yes(_, Vote::Commit(propose, _, _)) => propose.as_ref(),
-			_ => None,
+			HasVoted::Yes(_, Vote::Vote(propose, _)) | _ => None,
 		}
 	}
 
 	/// Returns the prevote we should vote with (if any.)
-	pub fn prepare(&self) -> Option<&Prepare<Block>> {
+	pub fn vote(&self) -> Option<&Prepare<Block>> {
 		match self {
-			HasVoted::Yes(_, Vote::Prepare(_, prepare)) |
-			HasVoted::Yes(_, Vote::Commit(_, prepare, _)) => Some(prepare),
-			_ => None,
-		}
-	}
-
-	/// Returns the precommit we should vote with (if any.)
-	pub fn commit(&self) -> Option<&Commit<Block>> {
-		match self {
-			HasVoted::Yes(_, Vote::Commit(_, _, commit)) => Some(commit),
+			HasVoted::Yes(_, Vote::Propose(_, prepare)) |
+			HasVoted::Yes(_, Vote::Vote(_, prepare)) => Some(prepare),
 			_ => None,
 		}
 	}
 
 	/// FIXME: Returns true if the voter can still propose, false otherwise.
-	pub fn can_pre_prepare(&self) -> bool {
-		self.pre_prepare().is_none()
+	pub fn can_propose(&self) -> bool {
+		self.propose().is_none()
 	}
 
 	/// Returns true if the voter can still prevote, false otherwise.
-	pub fn can_prepare(&self) -> bool {
-		self.prepare().is_none()
-	}
-
-	/// Returns true if the voter can still precommit, false otherwise.
-	pub fn can_commit(&self) -> bool {
-		self.commit().is_none()
+	pub fn can_vote(&self) -> bool {
+		self.vote().is_none()
 	}
 }
 
@@ -830,7 +813,8 @@ where
 					}
 				}
 
-				let justification = JasmineJustification::from_commit(&client, round_number, commit)?;
+				let justification =
+					JasmineJustification::from_commit(&client, round_number, commit)?;
 
 				(justification_required, justification)
 			},

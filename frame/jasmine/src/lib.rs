@@ -1,6 +1,6 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
-pub use sp_finality_pbft as fp_primitives;
+pub use sp_finality_jasmine as fp_primitives;
 
 use codec::{self as codec, Decode, Encode, MaxEncodedLen};
 pub use fp_primitives::{AuthorityId, AuthorityList};
@@ -71,12 +71,12 @@ pub mod pallet {
 
 impl<T: Config> Pallet<T> {
 	/// Get the current set of authorities, along with their respective weights.
-	pub fn pbft_authorities() -> AuthorityList {
+	pub fn jasmine_authorities() -> AuthorityList {
 		storage::unhashed::get_or_default::<AuthorityList>(PBFT_AUTHORITIES_KEY).into()
 	}
 
 	/// Set the current set of authorities, along with their respective weights.
-	fn set_pbft_authorities(authorities: &AuthorityList) {
+	fn set_jasmine_authorities(authorities: &AuthorityList) {
 		storage::unhashed::put(PBFT_AUTHORITIES_KEY, &authorities);
 	}
 
@@ -84,8 +84,8 @@ impl<T: Config> Pallet<T> {
 	// config builder or through `on_genesis_session`.
 	fn initialize(authorities: &AuthorityList) {
 		if !authorities.is_empty() {
-			assert!(Self::pbft_authorities().is_empty(), "Authorities are already initialized!");
-			Self::set_pbft_authorities(authorities);
+			assert!(Self::jasmine_authorities().is_empty(), "Authorities are already initialized!");
+			Self::set_jasmine_authorities(authorities);
 		}
 
 		// NOTE: initialize first session of first set. this is necessary for

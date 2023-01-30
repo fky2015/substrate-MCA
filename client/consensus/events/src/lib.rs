@@ -105,6 +105,10 @@ pub trait SlotWorker<B: BlockT, Proof> {
 	/// the slot. Otherwise `None` is returned.
 	async fn on_slot(&mut self, slot_info: SlotInfo<B>) -> Option<SlotResult<B, Proof>>;
 
+	/// Called when a new slot is triggered for in-between blocks.
+	///
+	/// Returns a future that resolves to a [`SlotResult`] iff a block was successfully built in
+	/// the slot. Otherwise `None` is returned.
 	async fn in_between_slot(&mut self, slot_info: SlotInfo<B>) -> Option<SlotResult<B, Proof>>;
 }
 
@@ -550,9 +554,9 @@ pub trait SimpleSlotWorker<B: BlockT> {
 		let logs = self.pre_digest_data(slot, &claim);
 
 		// TODO: add in_between block info to inherent_data
-		inherent_data = slot_info.inherent_data;
+		let mut inherent_data = slot_info.inherent_data;
 		// `true` means this block is a in_between block.
-		inherent_data.put_data(IN_BETWEEN_BLOCK_IDENTIFIER, true);
+		inherent_data.put_data(IN_BETWEEN_BLOCK_IDENTIFIER, &true);
 
 		// TODO: add QC info to inherent_data
 
@@ -696,6 +700,13 @@ impl<T: SimpleSlotWorker<B> + Send + Sync, B: BlockT>
 	) -> Option<SlotResult<B, <T::Proposer as Proposer<B>>::Proof>> {
 		self.0.on_slot(slot_info).await
 	}
+
+	async fn in_between_slot(
+		&mut self,
+		slot_info: SlotInfo<B>,
+	) -> Option<SlotResult<B, <T::Proposer as Proposer<B>>::Proof>> {
+		self.0.in_between_slot(slot_info).await
+	}
 }
 
 /// Slot specific extension that the inherent data provider needs to implement.
@@ -749,6 +760,7 @@ pub async fn start_slot_worker<B, C, W, SO, CIDP, CAW, Proof>(
 	mut worker: W,
 	mut sync_oracle: SO,
 	create_inherent_data_providers: CIDP,
+	in_between_create_inherent_data_providers: CIDP,
 	can_author_with: CAW,
 ) where
 	B: BlockT,
@@ -759,18 +771,19 @@ pub async fn start_slot_worker<B, C, W, SO, CIDP, CAW, Proof>(
 	CIDP::InherentDataProviders: InherentDataProviderExt + Send,
 	CAW: CanAuthorWith<B> + Send,
 {
-	let mut slots = Slots::new(slot_duration.as_duration(), create_inherent_data_providers, client);
+	let mut slots =
+		Slots::new(slot_duration.as_duration(), create_inherent_data_providers, client.clone());
 
-	const IN_BETWEEN_DIVISION: usize = 10;
+	const IN_BETWEEN_DIVISION: u32 = 10;
 
 	let mut in_between_slots = Slots::new(
 		slot_duration.as_duration() / IN_BETWEEN_DIVISION,
-		create_inherent_data_providers,
+		in_between_create_inherent_data_providers,
 		client,
 	);
 
 	loop {
-		for i in (1..IN_BETWEEN_DIVISION) {
+		for i in 1..IN_BETWEEN_DIVISION {
 			let slot_info = match in_between_slots.next_slot().await {
 				Ok(r) => r,
 				Err(e) => {

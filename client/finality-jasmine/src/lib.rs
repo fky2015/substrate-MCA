@@ -1,15 +1,11 @@
 use std::{marker::PhantomData, pin::Pin, sync::Arc, time::Duration};
 
 use crate::environment::VoterSetState;
-use authorities::SharedAuthoritySet;
-use authorities::{AuthoritySet, AuthoritySetChanges};
+use authorities::{AuthoritySet, AuthoritySetChanges, SharedAuthoritySet};
 use aux_schema::PersistentData;
 use communication::{Network as NetworkT, NetworkBridge, View};
 use environment::Environment;
-use finality_jasmine::{
-	leader::{self, voter, Error as JasmineError, VoterSet},
-	BlockNumberOps,
-};
+use finality_jasmine::{messages, voter, BlockNumberOps, Error as JasmineError, VoterSet};
 use futures::{future, prelude::*, Future, Sink, SinkExt, Stream, StreamExt, TryStreamExt};
 use log::{debug, error, info};
 use parity_scale_codec::{Decode, Encode};
@@ -51,7 +47,7 @@ macro_rules! afp_log {
 				log::Level::Info
 			};
 
-			log::log!(target: "afp", log_level, $($msg),+);
+			log::log!(target: "afj", log_level, $($msg),+);
 		}
 	};
 }
@@ -72,10 +68,11 @@ pub use notification::{JasmineJustificationSender, JasmineJustificationStream};
 use until_imported::UntilGlobalMessageBlocksImported;
 
 /// A JASMINE message for a substrate chain.
-pub type Message<Block> = leader::Message<NumberFor<Block>, <Block as BlockT>::Hash>;
+pub type Message<Block> =
+	messages::Message<NumberFor<Block>, <Block as BlockT>::Hash, AuthoritySignature, AuthorityId>;
 
 /// A signed message
-pub type SignedMessage<Block> = leader::SignedMessage<
+pub type SignedMessage<Block> = messages::SignedMessage<
 	NumberFor<Block>,
 	<Block as BlockT>::Hash,
 	AuthoritySignature,
@@ -83,35 +80,34 @@ pub type SignedMessage<Block> = leader::SignedMessage<
 >;
 
 /// A preprepare message for this chain's block type.
-pub type PrePrepare<Block> = leader::PrePrepare<NumberFor<Block>, <Block as BlockT>::Hash>;
-/// A prepare message for this chain's block type.
-pub type Prepare<Block> = leader::Prepare<NumberFor<Block>, <Block as BlockT>::Hash>;
-/// A commit message for this chain's block type.
-pub type Commit<Block> = leader::Commit<NumberFor<Block>, <Block as BlockT>::Hash>;
+pub type Propose<Block> =
+	messages::Propose<NumberFor<Block>, <Block as BlockT>::Hash, AuthoritySignature, AuthorityId>;
+
+pub type Vote<Block> = messages::Vote<NumberFor<Block>, <Block as BlockT>::Hash>;
 
 /// A catch up message for this chain's block type.
-pub type CatchUp<Block> =
-	leader::CatchUp<NumberFor<Block>, <Block as BlockT>::Hash, AuthoritySignature, AuthorityId>;
+// pub type CatchUp<Block> =
+// messages::CatchUp<NumberFor<Block>, <Block as BlockT>::Hash, AuthoritySignature, AuthorityId>;
 
 /// A finalized commit message for this chain's block type.
-pub type FinalizedCommit<Block> = leader::FinalizedCommit<
+pub type FinalizedCommit<Block> = messages::FinalizedCommit<
 	NumberFor<Block>,
 	<Block as BlockT>::Hash,
 	AuthoritySignature,
 	AuthorityId,
 >;
 
-pub type ViewChange = leader::ViewChange<AuthorityId>;
+// pub type ViewChange = leader::ViewChange<AuthorityId>;
 
 /// FIXME:
 #[derive(Debug, Encode, Decode)]
 pub enum GlobalMessage {
-	ViewChange(ViewChange),
-	Empty,
+	// ViewChange(ViewChange),
+	// Empty,
 }
 
 /// a compact commit message for this chain's block type.
-pub type CompactCommit<Block> = leader::CompactCommit<
+pub type CompactCommit<Block> = messages::CompactCommit<
 	<Block as BlockT>::Hash,
 	NumberFor<Block>,
 	AuthoritySignature,
@@ -121,7 +117,7 @@ pub type CompactCommit<Block> = leader::CompactCommit<
 /// A global communication input stream for commits and catch up messages. Not
 /// exposed publicly, used internally to simplify types in the communication
 /// layer.
-type GlobalCommunicationIn<Block> = leader::voter::GlobalMessageIn<
+type GlobalCommunicationIn<Block> = messages::GlobalMessageIn<
 	<Block as BlockT>::Hash,
 	NumberFor<Block>,
 	AuthoritySignature,
@@ -137,7 +133,7 @@ type GlobalCommunicationIn<Block> = leader::voter::GlobalMessageIn<
 /// Global communication sink for commits with the hash type not being derived
 /// from the block, useful for forcing the hash to some type (e.g. `H256`) when
 /// the compiler can't do the inference.
-type GlobalCommunicationOut<Block> = leader::voter::GlobalMessageOut<
+type GlobalCommunicationOut<Block> = messages::GlobalMessageOut<
 	<Block as BlockT>::Hash,
 	NumberFor<Block>,
 	AuthoritySignature,
@@ -153,8 +149,12 @@ pub struct SharedVoterState<Block: BlockT> {
 		RwLock<
 			Option<
 				Box<
-					dyn leader::voter::VoterState<<Block as BlockT>::Hash, AuthorityId>
-						+ Sync
+					dyn voter::report::VoterStateT<
+							NumberFor<Block>,
+							<Block as BlockT>::Hash,
+							AuthoritySignature,
+							AuthorityId,
+						> + Sync
 						+ Send,
 				>,
 			>,
@@ -170,7 +170,15 @@ impl<Block: BlockT> SharedVoterState<Block> {
 
 	fn reset(
 		&self,
-		voter_state: Box<dyn leader::voter::VoterState<Block::Hash, AuthorityId> + Sync + Send>,
+		voter_state: Box<
+			dyn voter::report::VoterStateT<
+					NumberFor<Block>,
+					<Block as BlockT>::Hash,
+					AuthoritySignature,
+					AuthorityId,
+				> + Sync
+				+ Send,
+		>,
 	) -> Option<()> {
 		let mut shared_voter_state = self.inner.try_write_for(Duration::from_secs(1))?;
 
@@ -181,7 +189,14 @@ impl<Block: BlockT> SharedVoterState<Block> {
 	// TODO: FKY: Get the inner `VoterState` instance.
 	pub fn voter_state(
 		&self,
-	) -> Option<leader::voter::report::VoterState<Block::Hash, AuthorityId>> {
+	) -> Option<
+		voter::report::VoterState<
+			NumberFor<Block>,
+			<Block as BlockT>::Hash,
+			AuthoritySignature,
+			AuthorityId,
+		>,
+	> {
 		self.inner.read().as_ref().map(|vs| vs.get())
 	}
 }
@@ -216,9 +231,9 @@ where
 	E: CallExecutor<Block>,
 {
 	fn get(&self) -> Result<AuthorityList, ClientError> {
-		// NOTE: This implementation uses the Grandpa runtime API instead of reading directly from the
-		// `GRANDPA_AUTHORITIES_KEY` as the data may have been migrated since the genesis block of
-		// the chain, whereas the runtime API is backwards compatible.
+		// NOTE: This implementation uses the Grandpa runtime API instead of reading directly from
+		// the `GRANDPA_AUTHORITIES_KEY` as the data may have been migrated since the genesis block
+		// of the chain, whereas the runtime API is backwards compatible.
 		self.executor()
 			.call(
 				&BlockId::Number(Zero::zero()),
@@ -558,7 +573,7 @@ where
 					(*self.env.voters).clone(),
 					global_comms,
 					last_completed_view.number,
-                    last_completed_view.base,
+					last_completed_view.base,
 				);
 
 				// Repoint shared_voter_state so that the RPC endpoint can query the state
@@ -673,11 +688,11 @@ where
 				// voters don't conclude naturally
 				return Poll::Ready(Err(Error::Safety(
 					"finality-jasmine inner voter has concluded.".into(),
-				)));
+				)))
 			},
 			Poll::Ready(Err(CommandOrError::Error(e))) => {
 				// return inner observer error
-				return Poll::Ready(Err(e));
+				return Poll::Ready(Err(e))
 			},
 			Poll::Ready(Err(CommandOrError::VoterCommand(command))) => {
 				// some command issued internally
@@ -690,7 +705,7 @@ where
 			Poll::Pending => {},
 			Poll::Ready(None) => {
 				// the `voter_commands_rx` stream should never conclude since it's never closed.
-				return Poll::Ready(Err(Error::Safety("`voter_commands_rx` was closed.".into())));
+				return Poll::Ready(Err(Error::Safety("`voter_commands_rx` was closed.".into())))
 			},
 			Poll::Ready(Some(command)) => {
 				// some command issued externally
@@ -971,8 +986,8 @@ impl<H, N> From<ClientError> for CommandOrError<H, N> {
 	}
 }
 
-impl<H, N> From<finality_jasmine::leader::Error> for CommandOrError<H, N> {
-	fn from(e: finality_jasmine::leader::Error) -> Self {
+impl<H, N> From<finality_jasmine::Error> for CommandOrError<H, N> {
+	fn from(e: finality_jasmine::Error) -> Self {
 		CommandOrError::Error(Error::from(e))
 	}
 }

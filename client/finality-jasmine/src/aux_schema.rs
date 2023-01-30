@@ -2,7 +2,7 @@
 
 use std::fmt::Debug;
 
-use finality_jasmine::leader::view_round::State as ViewState;
+use finality_jasmine::persistent::State as ViewState;
 use log::{info, warn};
 use parity_scale_codec::{Decode, Encode};
 

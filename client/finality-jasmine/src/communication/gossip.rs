@@ -4,7 +4,6 @@ use std::{
 };
 
 use ahash::{AHashMap, AHashSet};
-use finality_jasmine::leader;
 use log::{debug, trace};
 use parity_scale_codec::{Decode, Encode};
 use prometheus_endpoint::{register, CounterVec, Opts, PrometheusError, Registry, U64};

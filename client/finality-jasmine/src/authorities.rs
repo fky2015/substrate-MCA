@@ -1,6 +1,6 @@
 use std::{cmp::Ord, fmt::Debug, ops::Add};
 
-use finality_jasmine::leader::VoterSet;
+use finality_jasmine::VoterSet;
 use fork_tree::ForkTree;
 use log::debug;
 use parity_scale_codec::{Decode, Encode};

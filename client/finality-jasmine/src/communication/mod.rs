@@ -4,10 +4,9 @@ use std::{
 	task::{Context, Poll},
 };
 
-use finality_jasmine::leader::{
-	self, voter,
-	Message::{Commit, PrePrepare, Prepare},
-	VoterSet,
+use finality_jasmine::{
+	messages::{self, GlobalMessageIn, GlobalMessageOut},
+	voter, VoterSet,
 };
 use futures::{channel::mpsc, future, stream, Future, FutureExt, Sink, SinkExt, Stream, StreamExt};
 use log::{debug, trace};
@@ -540,7 +539,7 @@ fn incoming_global<B: BlockT>(
 
 					gossip_engine.lock().gossip_message(topic, notification.message.clone(), false);
 				},
-				voter::CommitProcessingOutcome::Bad(_) => {
+				CommitProcessingOutcome::Bad(_) => {
 					// report peer and do not gossip.
 					if let Some(who) = notification.sender.take() {
 						gossip_engine.lock().report(who, cost::INVALID_COMMIT);
@@ -548,9 +547,9 @@ fn incoming_global<B: BlockT>(
 				},
 			};
 
-			let cb = voter::Callback::Work(Box::new(cb));
+			let cb = messages::Callback::Work(Box::new(cb));
 
-			Some(voter::GlobalMessageIn::Commit(view.0, commit, cb))
+			Some(GlobalMessageIn::Commit(view.0, commit, cb))
 		}
 	};
 
@@ -562,7 +561,7 @@ fn incoming_global<B: BlockT>(
 		let gossip_validator = gossip_validator.clone();
 		let gossip_engine = gossip_engine.clone();
 
-        log::debug!(target: "afp", "process_catch_up");
+		log::debug!(target: "afp", "process_catch_up");
 
 		if let Err(cost) = check_catch_up::<B>(&msg.message, voters, msg.set_id, telemetry.clone())
 		{
@@ -574,7 +573,7 @@ fn incoming_global<B: BlockT>(
 		}
 
 		let cb = move |outcome| {
-			if let voter::CatchUpProcessingOutcome::Bad(_) = outcome {
+			if let messages::CatchUpProcessingOutcome::Bad(_) = outcome {
 				// report peer
 				if let Some(who) = notification.sender.take() {
 					gossip_engine.lock().report(who, cost::INVALID_CATCH_UP);
@@ -584,9 +583,9 @@ fn incoming_global<B: BlockT>(
 			gossip_validator.note_catch_up_message_processed();
 		};
 
-		let cb = voter::Callback::Work(Box::new(cb));
+		let cb = messages::Callback::Work(Box::new(cb));
 
-		Some(voter::GlobalMessageIn::CatchUp(msg.message, cb))
+		Some(GlobalMessageIn::CatchUp(msg.message, cb))
 	};
 
 	gossip_engine
@@ -610,9 +609,8 @@ fn incoming_global<B: BlockT>(
 				GossipMessage::CatchUp(msg) =>
 					process_catch_up(msg, notification, &gossip_engine, &gossip_validator, &*voters),
 				GossipMessage::Global(msg) => match msg.message {
-					crate::GlobalMessage::ViewChange(vc) =>
-						Some(voter::GlobalMessageIn::ViewChange(vc)),
-					crate::GlobalMessage::Empty => Some(voter::GlobalMessageIn::Empty),
+					crate::GlobalMessage::ViewChange(vc) => Some(GlobalMessageIn::ViewChange(vc)),
+					crate::GlobalMessage::Empty => Some(GlobalMessageIn::Empty),
 				},
 				_ => {
 					// TODO: FKY
@@ -664,17 +662,12 @@ impl<Block: BlockT> Sink<Message<Block>> for OutgoingMessages<Block> {
 	fn start_send(mut self: Pin<&mut Self>, mut msg: Message<Block>) -> Result<(), Self::Error> {
 		// if we've voted on this round previously under the same key, send that vote instead
 		match &mut msg {
-			leader::Message::PrePrepare(ref mut vote) => {
+			messages::Message::Propose(ref mut vote) => {
 				if let Some(pre_prepare) = self.has_voted.pre_prepare() {
 					*vote = pre_prepare.clone();
 				}
 			},
-			leader::Message::Prepare(ref mut vote) => {
-				if let Some(prepare) = self.has_voted.prepare() {
-					*vote = prepare.clone();
-				}
-			},
-			leader::Message::Commit(ref mut vote) =>
+			messages::Message::Vote(ref mut vote) =>
 				if let Some(commit) = self.has_voted.commit() {
 					*vote = commit.clone();
 				},
@@ -781,7 +774,7 @@ fn check_compact_commit<Block: BlockT>(
 	let mut buf = Vec::new();
 	for (i, (commit, &(ref sig, ref id))) in msg.commits.iter().zip(&msg.auth_data).enumerate() {
 		use crate::communication::gossip::Misbehavior;
-		use finality_jasmine::leader::Message as JasmineMessage;
+		use finality_jasmine::messages::Message as JasmineMessage;
 
 		if !sp_finality_jasmine::check_message_signature_with_buffer(
 			&JasmineMessage::Commit(commit.clone()),
@@ -910,7 +903,7 @@ fn check_catch_up<Block: BlockT>(
 	// check signatures on all contained prevotes.
 	let signatures_checked = check_signatures::<Block, _>(
 		msg.prepares.iter().map(|vote| {
-			(leader::Message::Prepare(vote.prepare.clone()), &vote.id, &vote.signature)
+			(messages::Message::Propose(vote.propose.clone()), &vote.id, &vote.signature)
 		}),
 		msg.view_number,
 		set_id.0,
@@ -923,7 +916,7 @@ fn check_catch_up<Block: BlockT>(
 	let _ = check_signatures::<Block, _>(
 		msg.commits
 			.iter()
-			.map(|vote| (leader::Message::Commit(vote.commit.clone()), &vote.id, &vote.signature)),
+			.map(|vote| (messages::Message::Vote(vote.commit.clone()), &vote.id, &vote.signature)),
 		msg.view_number,
 		set_id.0,
 		signatures_checked,
@@ -984,7 +977,7 @@ impl<Block: BlockT> Sink<GlobalCommunicationOut<Block>> for GlobalMessagesOut<Bl
 		}
 
 		let message = match input {
-			voter::GlobalMessageOut::Commit(view, f_commit) => {
+			GlobalMessageOut::Commit(view, f_commit) => {
 				let view = View(view);
 
 				telemetry!(
@@ -1024,15 +1017,15 @@ impl<Block: BlockT> Sink<GlobalCommunicationOut<Block>> for GlobalMessagesOut<Bl
 
 				message
 			},
-			voter::GlobalMessageOut::ViewChange(view_change) =>
-				GossipMessage::Global(gossip::GlobalMessage {
-					set_id: self.set_id,
-					message: crate::GlobalMessage::ViewChange(view_change),
-				}),
-			voter::GlobalMessageOut::Empty => GossipMessage::Global(gossip::GlobalMessage {
-				set_id: self.set_id,
-				message: crate::GlobalMessage::Empty,
-			}),
+			// GlobalMessageOut::ViewChange(view_change) =>
+			// 	GossipMessage::Global(gossip::GlobalMessage {
+			// 		set_id: self.set_id,
+			// 		message: crate::GlobalMessage::ViewChange(view_change),
+			// 	}),
+			// GlobalMessageOut::Empty => GossipMessage::Global(gossip::GlobalMessage {
+			// 	set_id: self.set_id,
+			// 	message: crate::GlobalMessage::Empty,
+			// }),
 		};
 
 		let topic = global_topic::<Block>(self.set_id.0);

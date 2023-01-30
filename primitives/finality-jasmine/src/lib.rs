@@ -17,10 +17,10 @@ use sp_std::{borrow::Cow, vec::Vec};
 #[cfg(feature = "std")]
 use log::debug;
 
-use jasmine::leader;
+use finality_jasmine::messages;
 
 /// Key type for PBFT module
-pub const KEY_TYPE: sp_core::crypto::KeyTypeId = sp_application_crypto::KeyTypeId(*b"jasmine");
+pub const KEY_TYPE: sp_core::crypto::KeyTypeId = sp_application_crypto::KeyTypeId(*b"JSME");
 
 mod app {
 	use sp_application_crypto::{app_crypto, ed25519};
@@ -170,7 +170,7 @@ pub fn localized_payload_with_buffer<E: Encode>(
 /// Check a message signature by encoding the message as a localized payload and
 /// verifying the provided signature using the expected authority id.
 pub fn check_message_signature<H, N>(
-	message: &leader::Message<H, N>,
+	message: &messages::Message<H, N, AuthoritySignature, AuthorityId>,
 	id: &AuthorityId,
 	signature: &AuthoritySignature,
 	view: u64,
@@ -188,7 +188,7 @@ where
 /// The encoding necessary to verify the signature will be done using the given
 /// buffer, the original content of the buffer will be cleared.
 pub fn check_message_signature_with_buffer<H, N>(
-	message: &leader::Message<H, N>,
+	message: &messages::Message<H, N, AuthoritySignature, AuthorityId>,
 	id: &AuthorityId,
 	signature: &AuthoritySignature,
 	view: u64,
@@ -217,11 +217,11 @@ where
 #[cfg(feature = "std")]
 pub fn sign_message<H, N>(
 	keystore: SyncCryptoStorePtr,
-	message: leader::Message<H, N>,
+	message: messages::Message<H, N, AuthoritySignature, AuthorityId>,
 	public: AuthorityId,
 	view: ViewNumber,
 	set_id: SetId,
-) -> Option<leader::SignedMessage<H, N, AuthoritySignature, AuthorityId>>
+) -> Option<messages::SignedMessage<H, N, AuthoritySignature, AuthorityId>>
 where
 	H: Encode,
 	N: Encode,
@@ -241,7 +241,7 @@ where
 	.try_into()
 	.ok()?;
 
-	Some(leader::SignedMessage { message, signature, id: public })
+	Some(messages::SignedMessage { message, signature, id: public })
 }
 
 sp_api::decl_runtime_apis! {

@@ -2067,6 +2067,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "finality-jasmine"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "futures-timer",
+ "log",
+ "num-traits",
+ "parity-scale-codec",
+ "parking_lot 0.12.0",
+ "scale-info",
+ "tokio",
+ "tracing",
+ "tracing-attributes",
+]
+
+[[package]]
 name = "finality-tendermint"
 version = "0.1.0"
 dependencies = [
@@ -4732,6 +4748,86 @@ dependencies = [
 ]
 
 [[package]]
+name = "node-jasmine"
+version = "4.0.0-dev"
+dependencies = [
+ "clap 3.1.18",
+ "frame-benchmarking",
+ "frame-benchmarking-cli",
+ "frame-system",
+ "jsonrpsee",
+ "node-jasmine-runtime",
+ "pallet-transaction-payment",
+ "pallet-transaction-payment-rpc",
+ "sc-basic-authorship",
+ "sc-cli",
+ "sc-client-api",
+ "sc-consensus",
+ "sc-consensus-aura",
+ "sc-executor",
+ "sc-finality-grandpa",
+ "sc-finality-jasmine",
+ "sc-keystore",
+ "sc-rpc",
+ "sc-rpc-api",
+ "sc-service",
+ "sc-telemetry",
+ "sc-transaction-pool",
+ "sc-transaction-pool-api",
+ "sp-api",
+ "sp-block-builder",
+ "sp-blockchain",
+ "sp-consensus",
+ "sp-consensus-aura",
+ "sp-core",
+ "sp-finality-jasmine",
+ "sp-inherents",
+ "sp-keyring",
+ "sp-runtime",
+ "sp-timestamp",
+ "substrate-build-script-utils",
+ "substrate-frame-rpc-system",
+ "try-runtime-cli",
+]
+
+[[package]]
+name = "node-jasmine-runtime"
+version = "4.0.0-dev"
+dependencies = [
+ "frame-benchmarking",
+ "frame-executive",
+ "frame-support",
+ "frame-system",
+ "frame-system-benchmarking",
+ "frame-system-rpc-runtime-api",
+ "frame-try-runtime",
+ "hex-literal",
+ "pallet-aura",
+ "pallet-balances",
+ "pallet-jasmine",
+ "pallet-jasmine-template",
+ "pallet-randomness-collective-flip",
+ "pallet-sudo",
+ "pallet-timestamp",
+ "pallet-transaction-payment",
+ "pallet-transaction-payment-rpc-runtime-api",
+ "parity-scale-codec",
+ "scale-info",
+ "sp-api",
+ "sp-block-builder",
+ "sp-consensus-aura",
+ "sp-core",
+ "sp-inherents",
+ "sp-offchain",
+ "sp-runtime",
+ "sp-session",
+ "sp-std",
+ "sp-transaction-pool",
+ "sp-version",
+ "substrate-wasm-builder",
+]
+
+[[package]]
 name = "node-primitives"
 version = "2.0.0"
 dependencies = [
@@ -5873,6 +5969,50 @@ dependencies = [
  "sp-keyring",
  "sp-runtime",
  "sp-std",
+]
+
+[[package]]
+name = "pallet-jasmine"
+version = "0.1.0"
+dependencies = [
+ "finality-jasmine",
+ "frame-benchmarking",
+ "frame-election-provider-support",
+ "frame-support",
+ "frame-system",
+ "log",
+ "pallet-authorship",
+ "pallet-balances",
+ "pallet-offences",
+ "pallet-session",
+ "pallet-staking",
+ "pallet-staking-reward-curve",
+ "pallet-timestamp",
+ "parity-scale-codec",
+ "scale-info",
+ "sp-application-crypto",
+ "sp-core",
+ "sp-finality-jasmine",
+ "sp-io",
+ "sp-keyring",
+ "sp-runtime",
+ "sp-session",
+ "sp-staking",
+ "sp-std",
+]
+
+[[package]]
+name = "pallet-jasmine-template"
+version = "4.0.0-dev"
+dependencies = [
+ "frame-benchmarking",
+ "frame-support",
+ "frame-system",
+ "parity-scale-codec",
+ "scale-info",
+ "sp-core",
+ "sp-io",
+ "sp-runtime",
 ]
 
 [[package]]
@@ -8370,6 +8510,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "sc-consensus-events"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "futures-timer",
+ "log",
+ "parity-scale-codec",
+ "sc-client-api",
+ "sc-consensus",
+ "sc-telemetry",
+ "sp-arithmetic",
+ "sp-blockchain",
+ "sp-consensus",
+ "sp-consensus-slots",
+ "sp-core",
+ "sp-inherents",
+ "sp-runtime",
+ "sp-state-machine",
+ "sp-timestamp",
+ "substrate-test-runtime-client",
+ "thiserror",
+]
+
+[[package]]
 name = "sc-consensus-manual-seal"
 version = "0.10.0-dev"
 dependencies = [
@@ -8623,6 +8788,51 @@ dependencies = [
  "sp-keyring",
  "sp-runtime",
  "substrate-test-runtime-client",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
+name = "sc-finality-jasmine"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "assert_matches",
+ "async-trait",
+ "dyn-clone",
+ "finality-jasmine",
+ "fork-tree",
+ "futures",
+ "futures-timer",
+ "log",
+ "parity-scale-codec",
+ "parking_lot 0.12.0",
+ "rand 0.8.4",
+ "sc-block-builder",
+ "sc-chain-spec",
+ "sc-client-api",
+ "sc-consensus",
+ "sc-keystore",
+ "sc-network",
+ "sc-network-gossip",
+ "sc-network-test",
+ "sc-telemetry",
+ "sc-utils",
+ "serde_json",
+ "sp-api",
+ "sp-application-crypto",
+ "sp-arithmetic",
+ "sp-blockchain",
+ "sp-consensus",
+ "sp-core",
+ "sp-finality-jasmine",
+ "sp-keyring",
+ "sp-keystore",
+ "sp-runtime",
+ "sp-tracing",
+ "substrate-prometheus-endpoint",
+ "substrate-test-runtime-client",
+ "tempfile",
  "thiserror",
  "tokio",
 ]
@@ -10119,6 +10329,23 @@ name = "sp-finality-grandpa"
 version = "4.0.0-dev"
 dependencies = [
  "finality-grandpa",
+ "log",
+ "parity-scale-codec",
+ "scale-info",
+ "serde",
+ "sp-api",
+ "sp-application-crypto",
+ "sp-core",
+ "sp-keystore",
+ "sp-runtime",
+ "sp-std",
+]
+
+[[package]]
+name = "sp-finality-jasmine"
+version = "0.1.0"
+dependencies = [
+ "finality-jasmine",
  "log",
  "parity-scale-codec",
  "scale-info",
@@ -12640,7 +12867,3 @@ dependencies = [
  "cc",
  "libc",
 ]
-
-[[patch.unused]]
-name = "finality-jasmine"
-version = "0.1.0"
