@@ -39,7 +39,7 @@ pub type AuthorityId = app::Public;
 pub type AuthoritySignature = app::Signature;
 
 /// The `ConsensusEngineId` of PBFT.
-pub const PBFT_ENGINE_ID: ConsensusEngineId = *b"JSME";
+pub const JASMINE_ENGINE_ID: ConsensusEngineId = *b"JSME";
 
 /// The storage key for the current set of weighted PBFT authorities.
 /// The value stored is an encoded VersionedAuthorityList.

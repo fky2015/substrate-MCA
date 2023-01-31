@@ -9,7 +9,7 @@ use super::{
 	GlobalCommunicationIn, SignedMessage,
 };
 
-use finality_jasmine::leader::voter;
+use finality_jasmine::messages;
 use futures::{
 	prelude::*,
 	stream::{Fuse, StreamExt},
@@ -343,7 +343,7 @@ impl<Block: BlockT> BlockUntilImported<Block> for SignedMessage<Block> {
 		msg: Self::Blocked,
 		status_check: &BlockStatus,
 	) -> Result<DiscardWaitOrReady<Block, Self, Self::Blocked>, Error> {
-		let (&target_hash, target_number) = msg.target();
+		let (target_hash, target_number) = msg.target();
 
 		if let Some(number) = status_check.block_number(target_hash)? {
 			if number != target_number {
@@ -358,7 +358,7 @@ impl<Block: BlockT> BlockUntilImported<Block> for SignedMessage<Block> {
 	}
 
 	fn wait_completed(self, canon_number: NumberFor<Block>) -> Option<Self::Blocked> {
-		let (&target_hash, target_number) = self.target();
+		let (target_hash, target_number) = self.target();
 		if canon_number != target_number {
 			warn_authority_wrong_target(target_hash, self.id);
 
@@ -444,10 +444,9 @@ impl<Block: BlockT> BlockUntilImported<Block> for BlockGlobalMessage<Block> {
 			};
 
 			match input {
-				voter::GlobalMessageIn::Commit(_, ref commit, ..) => {
+				messages::GlobalMessageIn::Commit(_, ref commit, ..) => {
 					// add known hashes from all precommits.
-					let commit_targets =
-						commit.commits.iter().map(|c| (c.target_number, c.target_hash));
+					let commit_targets = commit.qcs.iter().map(|c| (c.height, c.hash));
 
 					for (target_number, target_hash) in commit_targets {
 						if !query_known(target_hash, target_number)? {
@@ -455,26 +454,26 @@ impl<Block: BlockT> BlockUntilImported<Block> for BlockGlobalMessage<Block> {
 						}
 					}
 				},
-				voter::GlobalMessageIn::CatchUp(ref catch_up, ..) => {
-					// add known hashes from all prevotes and precommits.
-					let prepare_targets = catch_up
-						.prepares
-						.iter()
-						.map(|s| (s.prepare.target_number, s.prepare.target_hash));
-
-					let commit_targets = catch_up
-						.commits
-						.iter()
-						.map(|s| (s.commit.target_number, s.commit.target_hash));
-
-					let targets = prepare_targets.chain(commit_targets);
-
-					for (target_number, target_hash) in targets {
-						if !query_known(target_hash, target_number)? {
-							return Ok(DiscardWaitOrReady::Discard)
-						}
-					}
-				},
+				// messages::GlobalMessageIn::CatchUp(ref catch_up, ..) => {
+				// 	// add known hashes from all prevotes and precommits.
+				// 	let prepare_targets = catch_up
+				// 		.prepares
+				// 		.iter()
+				// 		.map(|s| (s.prepare.target_number, s.prepare.target_hash));
+				//
+				// 	let commit_targets = catch_up
+				// 		.commits
+				// 		.iter()
+				// 		.map(|s| (s.commit.target_number, s.commit.target_hash));
+				//
+				// 	let targets = prepare_targets.chain(commit_targets);
+				//
+				// 	for (target_number, target_hash) in targets {
+				// 		if !query_known(target_hash, target_number)? {
+				// 			return Ok(DiscardWaitOrReady::Discard)
+				// 		}
+				// 	}
+				// },
 				msg => {
 					log::trace!(target: "afp", "BlockGlobalMessage::needs_waiting: message: {:?}", msg);
 					return Ok(DiscardWaitOrReady::Ready(msg))

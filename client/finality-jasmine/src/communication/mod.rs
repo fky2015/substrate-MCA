@@ -22,13 +22,11 @@ use sp_keystore::SyncCryptoStorePtr;
 use sp_runtime::traits::{Block as BlockT, Hash as HashT, Header as HeaderT, NumberFor};
 
 use crate::{
-	communication::gossip::VoteMessage, environment::HasVoted, CatchUp, CompactCommit, Error,
+	communication::gossip::VoteMessage, environment::HasVoted, CompactCommit, Error,
 	FinalizedCommit, GlobalCommunicationIn, GlobalCommunicationOut, Message, SignedMessage,
 };
 
-use self::gossip::{
-	FullCatchUpMessage, FullCommitMessage, GossipMessage, GossipValidator, PeerReport,
-};
+use self::gossip::{FullCommitMessage, GossipMessage, GossipValidator, PeerReport};
 
 mod gossip;
 
@@ -233,7 +231,7 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 
 				for signed in view.votes.iter() {
 					let message = gossip::GossipMessage::Vote(gossip::VoteMessage::<B> {
-						message: signed.clone().into(),
+						message: signed,
 						view: View(view.number),
 						set_id: SetId(set_id),
 					});
@@ -318,34 +316,24 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 
 						if voters.len().get() <= TELEMETRY_VOTERS_LIMIT {
 							match &msg.message.message {
-								PrePrepare(preprepare) => {
+								messages::Message::Propose(propose) => {
 									telemetry!(
 										telemetry;
 										CONSENSUS_INFO;
 										"afp.received_propose";
 										"voter" => ?format!("{}", msg.message.id),
-										"target_number" => ?preprepare.target_number,
-										"target_hash" => ?preprepare.target_hash,
+										"target_number" => ?propose.target_number,
+										"target_hash" => ?propose.target_hash,
 									);
 								},
-								Prepare(prepare) => {
+								messages::Message::Vote(vote) => {
 									telemetry!(
 										telemetry;
 										CONSENSUS_INFO;
 										"afp.received_prevote";
 										"voter" => ?format!("{}", msg.message.id),
-										"target_number" => ?prepare.target_number,
-										"target_hash" => ?prepare.target_hash,
-									);
-								},
-								Commit(commit) => {
-									telemetry!(
-										telemetry;
-										CONSENSUS_INFO;
-										"afp.received_precommit";
-										"voter" => ?format!("{}", msg.message.id),
-										"target_number" => ?commit.target_number,
-										"target_hash" => ?commit.target_hash,
+										"target_number" => ?vote.target_number,
+										"target_hash" => ?vote.target_hash,
 									);
 								},
 							};
@@ -553,41 +541,41 @@ fn incoming_global<B: BlockT>(
 		}
 	};
 
-	let process_catch_up = move |msg: FullCatchUpMessage<B>,
-	                             mut notification: sc_network_gossip::TopicNotification,
-	                             gossip_engine: &Arc<Mutex<GossipEngine<B>>>,
-	                             gossip_validator: &Arc<GossipValidator<B>>,
-	                             voters: &VoterSet<AuthorityId>| {
-		let gossip_validator = gossip_validator.clone();
-		let gossip_engine = gossip_engine.clone();
+	// let process_catch_up = move |msg: FullCatchUpMessage<B>,
+	//                              mut notification: sc_network_gossip::TopicNotification,
+	//                              gossip_engine: &Arc<Mutex<GossipEngine<B>>>,
+	//                              gossip_validator: &Arc<GossipValidator<B>>,
+	//                              voters: &VoterSet<AuthorityId>| {
+	// 	let gossip_validator = gossip_validator.clone();
+	// 	let gossip_engine = gossip_engine.clone();
+	//
+	// 	log::debug!(target: "afp", "process_catch_up");
+	//
+	// 	if let Err(cost) = check_catch_up::<B>(&msg.message, voters, msg.set_id, telemetry.clone())
+	// 	{
+	// 		if let Some(who) = notification.sender {
+	// 			gossip_engine.lock().report(who, cost);
+	// 		}
+	//
+	// 		return None
+	// 	}
 
-		log::debug!(target: "afp", "process_catch_up");
-
-		if let Err(cost) = check_catch_up::<B>(&msg.message, voters, msg.set_id, telemetry.clone())
-		{
-			if let Some(who) = notification.sender {
-				gossip_engine.lock().report(who, cost);
-			}
-
-			return None
-		}
-
-		let cb = move |outcome| {
-			if let messages::CatchUpProcessingOutcome::Bad(_) = outcome {
-				// report peer
-				if let Some(who) = notification.sender.take() {
-					gossip_engine.lock().report(who, cost::INVALID_CATCH_UP);
-				}
-			}
-
-			gossip_validator.note_catch_up_message_processed();
-		};
-
-		let cb = messages::Callback::Work(Box::new(cb));
-
-		Some(GlobalMessageIn::CatchUp(msg.message, cb))
-	};
-
+	// 	let cb = move |outcome| {
+	// 		if let messages::CatchUpProcessingOutcome::Bad(_) = outcome {
+	// 			// report peer
+	// 			if let Some(who) = notification.sender.take() {
+	// 				gossip_engine.lock().report(who, cost::INVALID_CATCH_UP);
+	// 			}
+	// 		}
+	//
+	// 		gossip_validator.note_catch_up_message_processed();
+	// 	};
+	//
+	// 	let cb = messages::Callback::Work(Box::new(cb));
+	//
+	// 	Some(GlobalMessageIn::CatchUp(msg.message, cb))
+	// };
+	//
 	gossip_engine
 		.clone()
 		.lock()
@@ -606,11 +594,11 @@ fn incoming_global<B: BlockT>(
 			future::ready(match msg {
 				GossipMessage::Commit(msg) =>
 					process_commit(msg, notification, &gossip_engine, &gossip_validator, &*voters),
-				GossipMessage::CatchUp(msg) =>
-					process_catch_up(msg, notification, &gossip_engine, &gossip_validator, &*voters),
+				// GossipMessage::CatchUp(msg) =>
+				// 	process_catch_up(msg, notification, &gossip_engine, &gossip_validator, &*voters),
 				GossipMessage::Global(msg) => match msg.message {
-					crate::GlobalMessage::ViewChange(vc) => Some(GlobalMessageIn::ViewChange(vc)),
-					crate::GlobalMessage::Empty => Some(GlobalMessageIn::Empty),
+					// crate::GlobalMessage::ViewChange(vc) => Some(GlobalMessageIn::ViewChange(vc)),
+					// crate::GlobalMessage::Empty => Some(GlobalMessageIn::Empty),
 				},
 				_ => {
 					// TODO: FKY
@@ -663,12 +651,12 @@ impl<Block: BlockT> Sink<Message<Block>> for OutgoingMessages<Block> {
 		// if we've voted on this round previously under the same key, send that vote instead
 		match &mut msg {
 			messages::Message::Propose(ref mut vote) => {
-				if let Some(pre_prepare) = self.has_voted.pre_prepare() {
+				if let Some(pre_prepare) = self.has_voted.propose() {
 					*vote = pre_prepare.clone();
 				}
 			},
 			messages::Message::Vote(ref mut vote) =>
-				if let Some(commit) = self.has_voted.commit() {
+				if let Some(commit) = self.has_voted.vote() {
 					*vote = commit.clone();
 				},
 		}
@@ -678,7 +666,7 @@ impl<Block: BlockT> Sink<Message<Block>> for OutgoingMessages<Block> {
 			// QUESTION: FKY how does jasmine deal with it if no new block generated.
 			// TODO:     It should still gossip message's, but what contained in it's target_hash
 			// and      target_number?
-			let target_hash = *(msg.target().0);
+			let target_hash = msg.target().0;
 			let signed = sp_finality_jasmine::sign_message(
 				keystore.keystore(),
 				msg,
@@ -754,11 +742,12 @@ fn check_compact_commit<Block: BlockT>(
 ) -> Result<(), ReputationChange> {
 	// TODO: refactor
 	// check total len is not out of range.
-	if &msg.auth_data.len() > &voters.len().get() {
+    let auth_data = msg.qcs[0].signatures;
+	if &auth_data.len() > &voters.len().get() {
 		return Err(cost::MALFORMED_COMMIT)
 	}
 
-	for (_, ref id) in &msg.auth_data {
+	for (_, ref id) in &auth_data {
 		if let None = voters.get(id) {
 			debug!(target: "afp", "Skipping commit containing unknown voter {}", id);
 			return Err(cost::MALFORMED_COMMIT)
@@ -766,166 +755,167 @@ fn check_compact_commit<Block: BlockT>(
 	}
 
 	// Super majority.
-	if &msg.auth_data.len() < &voters.threshold() {
+	if &auth_data.len() < &voters.threshold() {
 		return Err(cost::MALFORMED_COMMIT)
 	}
 
 	// check signatures on all contained precommits.
-	let mut buf = Vec::new();
-	for (i, (commit, &(ref sig, ref id))) in msg.commits.iter().zip(&msg.auth_data).enumerate() {
-		use crate::communication::gossip::Misbehavior;
-		use finality_jasmine::messages::Message as JasmineMessage;
-
-		if !sp_finality_jasmine::check_message_signature_with_buffer(
-			&JasmineMessage::Commit(commit.clone()),
-			id,
-			sig,
-			view.0,
-			set_id.0,
-			&mut buf,
-		) {
-			debug!(target: "afp", "Bad commit message signature {}", id);
-			telemetry!(
-				telemetry;
-				CONSENSUS_DEBUG;
-				"afp.bad_commit_msg_signature";
-				"id" => ?id,
-			);
-			let cost = Misbehavior::BadCommitMessage {
-				signatures_checked: i as i32,
-				blocks_loaded: 0,
-				equivocations_caught: 0,
-			}
-			.cost();
-
-			return Err(cost)
-		}
-	}
+    // FIXME: valid the signatures of the QCs.
+	// let mut buf = Vec::new();
+	// for (i, (commit, &(ref sig, ref id))) in msg.commits.iter().zip(&msg.auth_data).enumerate() {
+	// 	use crate::communication::gossip::Misbehavior;
+	// 	use finality_jasmine::messages::Message as JasmineMessage;
+	//
+	// 	if !sp_finality_jasmine::check_message_signature_with_buffer(
+	// 		&JasmineMessage::Commit(commit.clone()),
+	// 		id,
+	// 		sig,
+	// 		view.0,
+	// 		set_id.0,
+	// 		&mut buf,
+	// 	) {
+	// 		debug!(target: "afp", "Bad commit message signature {}", id);
+	// 		telemetry!(
+	// 			telemetry;
+	// 			CONSENSUS_DEBUG;
+	// 			"afp.bad_commit_msg_signature";
+	// 			"id" => ?id,
+	// 		);
+	// 		let cost = Misbehavior::BadCommitMessage {
+	// 			signatures_checked: i as i32,
+	// 			blocks_loaded: 0,
+	// 			equivocations_caught: 0,
+	// 		}
+	// 		.cost();
+	//
+	// 		return Err(cost)
+	// 	}
+	// }
 
 	Ok(())
 }
 
 // checks a catch up. returns the cost associated with processing it if
 // the catch up was bad.
-fn check_catch_up<Block: BlockT>(
-	msg: &CatchUp<Block>,
-	voters: &VoterSet<AuthorityId>,
-	set_id: SetId,
-	telemetry: Option<TelemetryHandle>,
-) -> Result<(), ReputationChange> {
-	let full_len = voters.len().get();
-
-	fn check_len<'a>(
-		voters: &VoterSet<AuthorityId>,
-		threshold: usize,
-		msgs_len: usize,
-		msgs: impl Iterator<Item = &'a AuthorityId>,
-		full_len: usize,
-	) -> Result<(), ReputationChange> {
-		// Super majority.
-		if msgs_len < threshold {
-			return Err(cost::MALFORMED_CATCH_UP)
-		}
-
-		// check total len is not out of range.
-		if msgs_len > full_len {
-			return Err(cost::MALFORMED_CATCH_UP)
-		}
-
-		for id in msgs {
-			if let None = voters.get(&id) {
-				debug!(target: "afp", "Skipping catch up message containing unknown voter {}", id);
-				return Err(cost::MALFORMED_CATCH_UP)
-			}
-		}
-
-		Ok(())
-	}
-
-	// check_len(
-	// 	voters,
-	// 	voters.threshold(),
-	// 	msg.prepares.len(),
-	// 	msg.prepares.iter().map(|vote| &vote.id),
-	// 	full_len,
-	// )?;
-
-	check_len(
-		voters,
-		voters.threshold(),
-		msg.commits.len(),
-		msg.commits.iter().map(|vote| &vote.id),
-		full_len,
-	)?;
-
-	fn check_signatures<'a, B, I>(
-		messages: I,
-		view: ViewNumber,
-		set_id: SetIdNumber,
-		mut signatures_checked: usize,
-		buf: &mut Vec<u8>,
-		telemetry: Option<TelemetryHandle>,
-	) -> Result<usize, ReputationChange>
-	where
-		B: BlockT,
-		I: Iterator<Item = (Message<B>, &'a AuthorityId, &'a AuthoritySignature)>,
-	{
-		use crate::communication::gossip::Misbehavior;
-
-		for (msg, id, sig) in messages {
-			signatures_checked += 1;
-
-			if !sp_finality_jasmine::check_message_signature_with_buffer(
-				&msg, id, sig, view, set_id, buf,
-			) {
-				debug!(target: "afp", "Bad catch up message signature {}", id);
-				telemetry!(
-					telemetry;
-					CONSENSUS_DEBUG;
-					"afp.bad_catch_up_msg_signature";
-					"id" => ?id,
-				);
-
-				let cost = Misbehavior::BadCatchUpMessage {
-					signatures_checked: signatures_checked as i32,
-				}
-				.cost();
-
-				return Err(cost)
-			}
-		}
-
-		Ok(signatures_checked)
-	}
-
-	let mut buf = Vec::new();
-
-	// check signatures on all contained prevotes.
-	let signatures_checked = check_signatures::<Block, _>(
-		msg.prepares.iter().map(|vote| {
-			(messages::Message::Propose(vote.propose.clone()), &vote.id, &vote.signature)
-		}),
-		msg.view_number,
-		set_id.0,
-		0,
-		&mut buf,
-		telemetry.clone(),
-	)?;
-
-	// check signatures on all contained precommits.
-	let _ = check_signatures::<Block, _>(
-		msg.commits
-			.iter()
-			.map(|vote| (messages::Message::Vote(vote.commit.clone()), &vote.id, &vote.signature)),
-		msg.view_number,
-		set_id.0,
-		signatures_checked,
-		&mut buf,
-		telemetry,
-	)?;
-
-	Ok(())
-}
+// fn check_catch_up<Block: BlockT>(
+// 	msg: &CatchUp<Block>,
+// 	voters: &VoterSet<AuthorityId>,
+// 	set_id: SetId,
+// 	telemetry: Option<TelemetryHandle>,
+// ) -> Result<(), ReputationChange> {
+// 	let full_len = voters.len().get();
+//
+// 	fn check_len<'a>(
+// 		voters: &VoterSet<AuthorityId>,
+// 		threshold: usize,
+// 		msgs_len: usize,
+// 		msgs: impl Iterator<Item = &'a AuthorityId>,
+// 		full_len: usize,
+// 	) -> Result<(), ReputationChange> {
+// 		// Super majority.
+// 		if msgs_len < threshold {
+// 			return Err(cost::MALFORMED_CATCH_UP)
+// 		}
+//
+// 		// check total len is not out of range.
+// 		if msgs_len > full_len {
+// 			return Err(cost::MALFORMED_CATCH_UP)
+// 		}
+//
+// 		for id in msgs {
+// 			if let None = voters.get(&id) {
+// 				debug!(target: "afp", "Skipping catch up message containing unknown voter {}", id);
+// 				return Err(cost::MALFORMED_CATCH_UP)
+// 			}
+// 		}
+//
+// 		Ok(())
+// 	}
+//
+// 	// check_len(
+// 	// 	voters,
+// 	// 	voters.threshold(),
+// 	// 	msg.prepares.len(),
+// 	// 	msg.prepares.iter().map(|vote| &vote.id),
+// 	// 	full_len,
+// 	// )?;
+//
+// 	check_len(
+// 		voters,
+// 		voters.threshold(),
+// 		msg.commits.len(),
+// 		msg.commits.iter().map(|vote| &vote.id),
+// 		full_len,
+// 	)?;
+//
+// 	fn check_signatures<'a, B, I>(
+// 		messages: I,
+// 		view: ViewNumber,
+// 		set_id: SetIdNumber,
+// 		mut signatures_checked: usize,
+// 		buf: &mut Vec<u8>,
+// 		telemetry: Option<TelemetryHandle>,
+// 	) -> Result<usize, ReputationChange>
+// 	where
+// 		B: BlockT,
+// 		I: Iterator<Item = (Message<B>, &'a AuthorityId, &'a AuthoritySignature)>,
+// 	{
+// 		use crate::communication::gossip::Misbehavior;
+//
+// 		for (msg, id, sig) in messages {
+// 			signatures_checked += 1;
+//
+// 			if !sp_finality_jasmine::check_message_signature_with_buffer(
+// 				&msg, id, sig, view, set_id, buf,
+// 			) {
+// 				debug!(target: "afp", "Bad catch up message signature {}", id);
+// 				telemetry!(
+// 					telemetry;
+// 					CONSENSUS_DEBUG;
+// 					"afp.bad_catch_up_msg_signature";
+// 					"id" => ?id,
+// 				);
+//
+// 				let cost = Misbehavior::BadCatchUpMessage {
+// 					signatures_checked: signatures_checked as i32,
+// 				}
+// 				.cost();
+//
+// 				return Err(cost)
+// 			}
+// 		}
+//
+// 		Ok(signatures_checked)
+// 	}
+//
+// 	let mut buf = Vec::new();
+//
+// 	// check signatures on all contained prevotes.
+// 	let signatures_checked = check_signatures::<Block, _>(
+// 		msg.prepares.iter().map(|vote| {
+// 			(messages::Message::Propose(vote.propose.clone()), &vote.id, &vote.signature)
+// 		}),
+// 		msg.view_number,
+// 		set_id.0,
+// 		0,
+// 		&mut buf,
+// 		telemetry.clone(),
+// 	)?;
+//
+// 	// check signatures on all contained precommits.
+// 	let _ = check_signatures::<Block, _>(
+// 		msg.commits
+// 			.iter()
+// 			.map(|vote| (messages::Message::Vote(vote.commit.clone()), &vote.id, &vote.signature)),
+// 		msg.view_number,
+// 		set_id.0,
+// 		signatures_checked,
+// 		&mut buf,
+// 		telemetry,
+// 	)?;
+//
+// 	Ok(())
+// }
 
 /// An output sink for commit messages.
 struct GlobalMessagesOut<Block: BlockT> {
@@ -987,17 +977,16 @@ impl<Block: BlockT> Sink<GlobalCommunicationOut<Block>> for GlobalMessagesOut<Bl
 					"target_number" => ?f_commit.target_number,
 					"target_hash" => ?f_commit.target_hash,
 				);
-				let (commits, auth_data) = f_commit
-					.commits
-					.into_iter()
-					.map(|signed| (signed.commit, (signed.signature, signed.id)))
-					.unzip();
+				// let (commits, auth_data) = f_commit
+				// 	.qcs
+				// 	.into_iter()
+				// 	.map(|signed| (signed.commit, (signed.signature, signed.id)))
+				// 	.unzip();
 
 				let compact_commit = CompactCommit::<Block> {
 					target_hash: f_commit.target_hash,
 					target_number: f_commit.target_number,
-					commits,
-					auth_data,
+					qcs: f_commit.qcs,
 				};
 
 				let message = GossipMessage::Commit(FullCommitMessage::<Block> {

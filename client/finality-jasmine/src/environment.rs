@@ -12,12 +12,11 @@ use crate::{
 	local_authority_id,
 	notification::JasmineJustificationSender,
 	until_imported::UntilVoteTargetImported,
-	ClientForJasmine, CommandOrError, Commit, Config, Error, FinalizedCommit, NewAuthoritySet,
-	Propose, Vote, SignedMessage, VoterCommand,
+	ClientForJasmine, CommandOrError, Config, Error, FinalizedCommit, NewAuthoritySet, Propose,
+	SignedMessage, Vote as JasmineVote, VoterCommand,
 };
 use finality_jasmine::{
-	leader::{self, Error as JasmineError, State as ViewState, VoterSet},
-	BlockNumberOps,
+	environment, messages, voter, BlockNumberOps, Error as JasmineError, VoterSet,
 };
 use futures::{prelude::*, Future, Sink, Stream};
 use log::{debug, warn};
@@ -35,12 +34,8 @@ use sp_runtime::{
 	traits::{Block as BlockT, Header as HeaderT, NumberFor, Zero},
 };
 
-type SignedCommit<Block> = leader::SignedCommit<
-	NumberFor<Block>,
-	<Block as BlockT>::Hash,
-	AuthoritySignature,
-	AuthorityId,
->;
+type SignedCommit<Block> =
+	messages::SignedCommit<NumberFor<Block>, <Block as BlockT>::Hash, AuthoritySignature, AuthorityId>;
 
 type HistoricalVotes<Block> = Vec<SignedCommit<Block>>;
 
@@ -90,7 +85,7 @@ impl<BE, Block: BlockT, C, N: NetworkT<Block>, SC> Environment<BE, Block, C, N, 
 	}
 }
 
-impl<B, Block, C, N, SC> leader::voter::Environment for Environment<B, Block, C, N, SC>
+impl<B, Block, C, N, SC> environment::Environment for Environment<B, Block, C, N, SC>
 where
 	Block: BlockT,
 	B: BackendT<Block>,
@@ -116,7 +111,7 @@ where
 		Box<
 			dyn Stream<
 					Item = Result<
-						::finality_jasmine::leader::SignedMessage<
+						::finality_jasmine::messages::SignedMessage<
 							NumberFor<Block>,
 							Block::Hash,
 							Self::Signature,
@@ -131,7 +126,12 @@ where
 	type Out = Pin<
 		Box<
 			dyn Sink<
-					::finality_jasmine::leader::Message<NumberFor<Block>, Block::Hash>,
+					::finality_jasmine::messages::Message<
+						NumberFor<Block>,
+						Block::Hash,
+						Self::Signature,
+						Self::Id,
+					>,
 					Error = Self::Error,
 				> + Send,
 		>,
@@ -143,17 +143,14 @@ where
 
 	type Number = NumberFor<Block>;
 
-	fn voter_data(&self) -> leader::voter::communicate::VoterData<Self::Id> {
+	fn voter_data(&self) -> environment::VoterData<Self::Id> {
 		let local_id = local_authority_id(&self.voters, self.config.keystore.as_ref())
 			.expect("expect to have local_id to be a validtor.");
 
-		leader::voter::communicate::VoterData { local_id }
+		environment::VoterData { local_id }
 	}
 
-	fn round_data(
-		&self,
-		view: u64,
-	) -> leader::voter::communicate::RoundData<Self::Id, Self::In, Self::Out> {
+	fn round_data(&self, view: u64) -> environment::RoundData<Self::Id, Self::In, Self::Out> {
 		let local_id = local_authority_id(&self.voters, self.config.keystore.as_ref());
 
 		let has_voted = match self.voter_set_state.has_voted(view) {
@@ -207,10 +204,10 @@ where
 
 		// schedule network message cleanup when sink drops.
 		let outgoing = Box::pin(outgoing.sink_err_into());
-		leader::voter::communicate::RoundData { voter_id: local_id.unwrap(), incoming, outgoing }
+		environment::RoundData { local_id: local_id.unwrap(), incoming, outgoing }
 	}
 
-	fn preprepare(&self, view: u64, block: Self::Hash) -> Self::BestChain {
+	fn propose(&self, view: u64, block: Self::Hash) -> Self::BestChain {
 		let client = self.client.clone();
 		let authority_set = self.authority_set.clone();
 		let select_chain = self.select_chain.clone();
@@ -231,51 +228,51 @@ where
 		})
 	}
 
-	fn complete_f_commit(
-		&self,
-		view: u64,
-		state: ViewState<Self::Number, Self::Hash>,
-		base: (Self::Number, Self::Hash),
-		f_commit: leader::FinalizedCommit<Self::Number, Self::Hash, Self::Signature, Self::Id>,
-	) -> Result<(), Self::Error> {
-		self.update_voter_set_state(|voter_set_state| {
-			let (completed_views, current_views) =
-				if let VoterSetState::Live { completed_views, current_views } = voter_set_state {
-					(completed_views, current_views)
-				} else {
-					let msg = "Voter acting while in paused state.";
-					return Err(Error::Safety(msg.to_string()))
-				};
-
-			let mut completed_views = completed_views.clone();
-			let mut current_views = current_views.clone();
-
-			let votes = f_commit.commits;
-
-			if let Some(_current_view) = current_views.get(&view) {
-				// Currently, we don't have to use `CurrentViews`
-			} else {
-				current_views.insert(view, HasVoted::No);
-				if view >= 1 {
-					// Remove previews view if higher view present.
-					current_views.remove(&(view - 1));
-				}
-			}
-
-			completed_views.push(CompletedView { number: view, state: state.clone(), base, votes });
-
-			let set_state = VoterSetState::<Block>::Live {
-				completed_views,
-				current_views: current_views.clone(),
-			};
-
-			crate::aux_schema::write_voter_set_state(&*self.client, &set_state)?;
-
-			Ok(Some(set_state))
-		})?;
-
-		Ok(())
-	}
+	// fn complete_f_commit(
+	// 	&self,
+	// 	view: u64,
+	// 	state: ViewState<Self::Number, Self::Hash>,
+	// 	base: (Self::Number, Self::Hash),
+	// 	f_commit: messages::FinalizedCommit<Self::Number, Self::Hash, Self::Signature, Self::Id>,
+	// ) -> Result<(), Self::Error> {
+	// 	self.update_voter_set_state(|voter_set_state| {
+	// 		let (completed_views, current_views) =
+	// 			if let VoterSetState::Live { completed_views, current_views } = voter_set_state {
+	// 				(completed_views, current_views)
+	// 			} else {
+	// 				let msg = "Voter acting while in paused state.";
+	// 				return Err(Error::Safety(msg.to_string()))
+	// 			};
+	//
+	// 		let mut completed_views = completed_views.clone();
+	// 		let mut current_views = current_views.clone();
+	//
+	// 		let votes = f_commit.commits;
+	//
+	// 		if let Some(_current_view) = current_views.get(&view) {
+	// 			// Currently, we don't have to use `CurrentViews`
+	// 		} else {
+	// 			current_views.insert(view, HasVoted::No);
+	// 			if view >= 1 {
+	// 				// Remove previews view if higher view present.
+	// 				current_views.remove(&(view - 1));
+	// 			}
+	// 		}
+	//
+	// 		completed_views.push(CompletedView { number: view, state: state.clone(), base, votes });
+	//
+	// 		let set_state = VoterSetState::<Block>::Live {
+	// 			completed_views,
+	// 			current_views: current_views.clone(),
+	// 		};
+	//
+	// 		crate::aux_schema::write_voter_set_state(&*self.client, &set_state)?;
+	//
+	// 		Ok(Some(set_state))
+	// 	})?;
+	//
+	// 	Ok(())
+	// }
 
 	fn finalize_block(
 		&self,
@@ -385,23 +382,23 @@ pub enum Vote<Block: BlockT> {
 	/// Has cast a proposal.
 	Propose(Propose<Block>),
 	/// Has cast a vote.
-	Vote(Option<Propose<Block>>, Vote<Block>),
+	Vote(Option<Propose<Block>>, JasmineVote<Block>),
 }
 
 impl<Block: BlockT> HasVoted<Block> {
 	/// Returns the proposal we should vote with (if any.)
-	pub fn propose(&self) -> Option<&PrePrepare<Block>> {
+	pub fn propose(&self) -> Option<&Propose<Block>> {
 		match self {
-			HasVoted::Yes(_, Vote::PrePrepare(propose)) => Some(propose),
-			HasVoted::Yes(_, Vote::Vote(propose, _)) | _ => None,
+			HasVoted::Yes(_, Vote::Propose(propose)) => Some(propose),
+			HasVoted::Yes(_, Vote::Vote(propose, _)) => propose.as_ref(),
+			_ => None,
 		}
 	}
 
 	/// Returns the prevote we should vote with (if any.)
-	pub fn vote(&self) -> Option<&Prepare<Block>> {
+	pub fn vote(&self) -> Option<&JasmineVote<Block>> {
 		match self {
-			HasVoted::Yes(_, Vote::Propose(_, prepare)) |
-			HasVoted::Yes(_, Vote::Vote(_, prepare)) => Some(prepare),
+			HasVoted::Yes(_, Vote::Vote(_, vote)) => Some(vote),
 			_ => None,
 		}
 	}
@@ -428,7 +425,7 @@ pub struct CompletedView<Block: BlockT> {
 	/// The view number.
 	pub number: ViewNumber,
 	/// The view state (prevote ghost, estimate, finalized, etc.)
-	pub state: ViewState<NumberFor<Block>, Block::Hash>,
+	pub state: (NumberFor<Block>, Block::Hash),
 	/// The target block base used for voting in the view.
 	pub base: (NumberFor<Block>, Block::Hash),
 	/// All the votes observed in the view.

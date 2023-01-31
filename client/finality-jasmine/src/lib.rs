@@ -570,10 +570,10 @@ where
 
 				let mut voter = voter::Voter::new(
 					self.env.clone(),
+					Box::new(global_comms.0),
+					Box::pin(global_comms.1),
 					(*self.env.voters).clone(),
-					global_comms,
-					last_completed_view.number,
-					last_completed_view.base,
+					last_completed_round.base,
 				);
 
 				// Repoint shared_voter_state so that the RPC endpoint can query the state
@@ -585,8 +585,7 @@ where
 				}
 
 				self.voter = Box::pin(async move {
-					// TODO: Result<>
-					voter.run().await;
+					voter.start().await;
 					afp_log!(true, "async voter exit.");
 					Ok(())
 				});

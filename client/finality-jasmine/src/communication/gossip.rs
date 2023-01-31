@@ -17,7 +17,7 @@ use sp_arithmetic::traits::Zero;
 use sp_finality_jasmine::AuthorityId;
 use sp_runtime::traits::Block as BlockT;
 
-use crate::{environment, CatchUp, CompactCommit, SignedMessage, ViewChange};
+use crate::{environment, CompactCommit, SignedMessage};
 
 use super::{benefit, cost, SetId, View};
 
@@ -248,10 +248,10 @@ pub(super) enum GossipMessage<Block: BlockT> {
 	Global(GlobalMessage),
 	/// A neighbor packet. Not repropagated.
 	Neighbor(VersionedNeighborPacket<NumberFor<Block>>),
-	/// Grandpa catch up request message with round and set info. Not repropagated.
-	CatchUpRequest(CatchUpRequestMessage),
-	/// Grandpa catch up message with round and set info. Not repropagated.
-	CatchUp(FullCatchUpMessage<Block>),
+	// Grandpa catch up request message with round and set info. Not repropagated.
+	// CatchUpRequest(CatchUpRequestMessage),
+	// Grandpa catch up message with round and set info. Not repropagated.
+	// CatchUp(FullCatchUpMessage<Block>),
 }
 
 impl<Block: BlockT> From<NeighborPacket<NumberFor<Block>>> for GossipMessage<Block> {
@@ -319,22 +319,22 @@ impl<N> VersionedNeighborPacket<N> {
 }
 
 /// A catch up request for a given round (or any further round) localized by set id.
-#[derive(Clone, Debug, Encode, Decode)]
-pub(super) struct CatchUpRequestMessage {
-	/// The round that we want to catch up to.
-	pub(super) view: View,
-	/// The voter set ID this message is from.
-	pub(super) set_id: SetId,
-}
-
-/// Network level catch up message with topic information.
-#[derive(Debug, Encode, Decode)]
-pub(super) struct FullCatchUpMessage<Block: BlockT> {
-	/// The voter set ID this message is from.
-	pub(super) set_id: SetId,
-	/// The compact commit message.
-	pub(super) message: CatchUp<Block>,
-}
+// #[derive(Clone, Debug, Encode, Decode)]
+// pub(super) struct CatchUpRequestMessage {
+// 	/// The round that we want to catch up to.
+// 	pub(super) view: View,
+// 	/// The voter set ID this message is from.
+// 	pub(super) set_id: SetId,
+// }
+//
+// /// Network level catch up message with topic information.
+// #[derive(Debug, Encode, Decode)]
+// pub(super) struct FullCatchUpMessage<Block: BlockT> {
+// 	/// The voter set ID this message is from.
+// 	pub(super) set_id: SetId,
+// 	/// The compact commit message.
+// 	pub(super) message: CatchUp<Block>,
+// }
 
 /// Misbehavior that peers can perform.
 ///
@@ -604,7 +604,7 @@ enum PendingCatchUp {
 	/// No pending catch up requests.
 	None,
 	/// Pending catch up request which has not been answered yet.
-	Requesting { who: PeerId, request: CatchUpRequestMessage, instant: Instant },
+	// Requesting { who: PeerId, request: CatchUpRequestMessage, instant: Instant },
 	/// Pending catch up request that was answered and is being processed.
 	Processing { instant: Instant },
 }
@@ -873,44 +873,44 @@ impl<Block: BlockT> Inner<Block> {
 		return Action::ProcessAndDiscard(topic, benefit::NEIGHBOR_MESSAGE)
 	}
 
-	fn validate_catch_up_message(
-		&mut self,
-		who: &PeerId,
-		full: &FullCatchUpMessage<Block>,
-	) -> Action<Block::Hash> {
-		match &self.pending_catch_up {
-			PendingCatchUp::Requesting { who: peer, request, instant } => {
-				if peer != who {
-					return Action::Discard(Misbehavior::OutOfScopeMessage.cost())
-				}
-
-				if request.set_id != full.set_id {
-					return Action::Discard(cost::MALFORMED_CATCH_UP)
-				}
-
-				log::trace!(target: "afp", "full: {:?}", full.message);
-				// if request.view.0 > full.message.view_number {
-				//                 log::trace!(target: "afp", "full: {:?}", full.message);
-				// 	return Action::Discard(cost::MALFORMED_CATCH_UP)
-				// }
-
-				if full.message.commits.is_empty() {
-					return Action::Discard(cost::MALFORMED_CATCH_UP)
-				}
-
-				// move request to pending processing state, we won't push out
-				// any catch up requests until we import this one (either with a
-				// success or failure).
-				self.pending_catch_up = PendingCatchUp::Processing { instant: *instant };
-
-				// always discard catch up messages, they're point-to-point
-				let topic = super::global_topic::<Block>(full.set_id.0);
-				Action::ProcessAndDiscard(topic, benefit::BASIC_VALIDATED_CATCH_UP)
-			},
-			_ => Action::Discard(Misbehavior::OutOfScopeMessage.cost()),
-		}
-	}
-
+	// fn validate_catch_up_message(
+	// 	&mut self,
+	// 	who: &PeerId,
+	// 	full: &FullCatchUpMessage<Block>,
+	// ) -> Action<Block::Hash> {
+	// 	match &self.pending_catch_up {
+	// 		PendingCatchUp::Requesting { who: peer, request, instant } => {
+	// 			if peer != who {
+	// 				return Action::Discard(Misbehavior::OutOfScopeMessage.cost())
+	// 			}
+	//
+	// 			if request.set_id != full.set_id {
+	// 				return Action::Discard(cost::MALFORMED_CATCH_UP)
+	// 			}
+	//
+	// 			log::trace!(target: "afp", "full: {:?}", full.message);
+	// 			// if request.view.0 > full.message.view_number {
+	// 			//                 log::trace!(target: "afp", "full: {:?}", full.message);
+	// 			// 	return Action::Discard(cost::MALFORMED_CATCH_UP)
+	// 			// }
+	//
+	// 			if full.message.commits.is_empty() {
+	// 				return Action::Discard(cost::MALFORMED_CATCH_UP)
+	// 			}
+	//
+	// 			// move request to pending processing state, we won't push out
+	// 			// any catch up requests until we import this one (either with a
+	// 			// success or failure).
+	// 			self.pending_catch_up = PendingCatchUp::Processing { instant: *instant };
+	//
+	// 			// always discard catch up messages, they're point-to-point
+	// 			let topic = super::global_topic::<Block>(full.set_id.0);
+	// 			Action::ProcessAndDiscard(topic, benefit::BASIC_VALIDATED_CATCH_UP)
+	// 		},
+	// 		_ => Action::Discard(Misbehavior::OutOfScopeMessage.cost()),
+	// 	}
+	// }
+	//
 	fn note_catch_up_message_processed(&mut self) {
 		match &self.pending_catch_up {
 			PendingCatchUp::Processing { .. } => {
@@ -923,135 +923,140 @@ impl<Block: BlockT> Inner<Block> {
 		}
 	}
 
-	fn handle_catch_up_request(
-		&mut self,
-		who: &PeerId,
-		request: CatchUpRequestMessage,
-		set_state: &environment::SharedVoterSetState<Block>,
-	) -> (Option<GossipMessage<Block>>, Action<Block::Hash>) {
-		trace!(target: "afp", "handle_catch_up_request");
-		let local_view = match self.local_view {
-			None => return (None, Action::Discard(Misbehavior::OutOfScopeMessage.cost())),
-			Some(ref view) => view,
-		};
+	// fn handle_catch_up_request(
+	// 	&mut self,
+	// 	who: &PeerId,
+	// 	request: CatchUpRequestMessage,
+	// 	set_state: &environment::SharedVoterSetState<Block>,
+	// ) -> (Option<GossipMessage<Block>>, Action<Block::Hash>) {
+	// 	trace!(target: "afp", "handle_catch_up_request");
+	// 	let local_view = match self.local_view {
+	// 		None => return (None, Action::Discard(Misbehavior::OutOfScopeMessage.cost())),
+	// 		Some(ref view) => view,
+	// 	};
+	//
+	// 	if request.set_id != local_view.set_id {
+	// 		// NOTE: When we're close to a set change there is potentially a
+	// 		// race where the peer sent us the request before it observed that
+	// 		// we had transitioned to a new set. In this case we charge a lower
+	// 		// cost.
+	// 		if request.set_id.0.saturating_add(1) == local_view.set_id.0 &&
+	// 			local_view.view.0.saturating_sub(CATCH_UP_THRESHOLD) == 0
+	// 		{
+	// 			return (None, Action::Discard(cost::HONEST_OUT_OF_SCOPE_CATCH_UP))
+	// 		}
+	//
+	// 		return (None, Action::Discard(Misbehavior::OutOfScopeMessage.cost()))
+	// 	}
+	// 	trace!(target: "afp", "handle_catch_up_request phase 2");
+	//
+	// 	match self.peers.peer(who) {
+	// 		None => return (None, Action::Discard(Misbehavior::OutOfScopeMessage.cost())),
+	// 		// NOTE: we change >= to > because when view_change,
+	// 		// a lost-behind node may in view 0, and we are in view 1.
+	// 		Some(peer) if peer.view.view > request.view => {
+	// 			trace!(target: "afp", "handle_catch_up_request phase {:?} {:?}", peer.view.view,
+	// request.view); 			return (None, Action::Discard(Misbehavior::OutOfScopeMessage.cost()))
+	// 		},
+	// 		_ => {},
+	// 	}
+	// 	trace!(target: "afp", "handle_catch_up_request phase 3");
+	//
+	// 	let last_completed_view = set_state.read().last_completed_view();
+	// 	if last_completed_view.number < request.view.0 {
+	// 		return (None, Action::Discard(Misbehavior::OutOfScopeMessage.cost()))
+	// 	}
+	//
+	// 	trace!(target: "afp", "Replying to catch-up request for view {} from {} with view {}",
+	// 		request.view.0,
+	// 		who,
+	// 		last_completed_view.number,
+	// 	);
+	//
+	// 	// TODO: remove this.
+	// 	let mut prepares = Vec::new();
+	//
+	// 	let mut commits = Vec::new();
+	//
+	// 	trace!(target: "afp", "handle_catch_up_request votes {:?}", last_completed_view.votes);
+	//
+	// 	// NOTE: the set of votes stored in `LastCompletedView` is a minimal
+	// 	// set of votes, i.e. at most one equivocation is stored per voter. The
+	// 	// code below assumes this invariant is maintained when creating the
+	// 	// catch up reply since peers won't accept catch-up messages that have
+	// 	// too many equivocations (we exceed the fault-tolerance bound).
+	// 	commits = last_completed_view.votes.clone();
+	//
+	// 	let (base_number, base_hash) = last_completed_view.base;
+	//
+	// 	let catch_up = CatchUp::<Block> {
+	// 		view_number: last_completed_view.number,
+	// 		prepares,
+	// 		commits,
+	// 		base_hash,
+	// 		base_number,
+	// 	};
+	//
+	// 	let full_catch_up = GossipMessage::CatchUp::<Block>(FullCatchUpMessage {
+	// 		set_id: request.set_id,
+	// 		message: catch_up,
+	// 	});
+	//
+	// 	(Some(full_catch_up), Action::Discard(cost::CATCH_UP_REPLY))
+	// }
 
-		if request.set_id != local_view.set_id {
-			// NOTE: When we're close to a set change there is potentially a
-			// race where the peer sent us the request before it observed that
-			// we had transitioned to a new set. In this case we charge a lower
-			// cost.
-			if request.set_id.0.saturating_add(1) == local_view.set_id.0 &&
-				local_view.view.0.saturating_sub(CATCH_UP_THRESHOLD) == 0
-			{
-				return (None, Action::Discard(cost::HONEST_OUT_OF_SCOPE_CATCH_UP))
-			}
-
-			return (None, Action::Discard(Misbehavior::OutOfScopeMessage.cost()))
-		}
-		trace!(target: "afp", "handle_catch_up_request phase 2");
-
-		match self.peers.peer(who) {
-			None => return (None, Action::Discard(Misbehavior::OutOfScopeMessage.cost())),
-			// NOTE: we change >= to > because when view_change,
-			// a lost-behind node may in view 0, and we are in view 1.
-			Some(peer) if peer.view.view > request.view => {
-				trace!(target: "afp", "handle_catch_up_request phase {:?} {:?}", peer.view.view, request.view);
-				return (None, Action::Discard(Misbehavior::OutOfScopeMessage.cost()))
-			},
-			_ => {},
-		}
-		trace!(target: "afp", "handle_catch_up_request phase 3");
-
-		let last_completed_view = set_state.read().last_completed_view();
-		if last_completed_view.number < request.view.0 {
-			return (None, Action::Discard(Misbehavior::OutOfScopeMessage.cost()))
-		}
-
-		trace!(target: "afp", "Replying to catch-up request for view {} from {} with view {}",
-			request.view.0,
-			who,
-			last_completed_view.number,
-		);
-
-		// TODO: remove this.
-		let mut prepares = Vec::new();
-
-		let mut commits = Vec::new();
-
-		trace!(target: "afp", "handle_catch_up_request votes {:?}", last_completed_view.votes);
-
-		// NOTE: the set of votes stored in `LastCompletedView` is a minimal
-		// set of votes, i.e. at most one equivocation is stored per voter. The
-		// code below assumes this invariant is maintained when creating the
-		// catch up reply since peers won't accept catch-up messages that have
-		// too many equivocations (we exceed the fault-tolerance bound).
-		commits = last_completed_view.votes.clone();
-
-		let (base_number, base_hash) = last_completed_view.base;
-
-		let catch_up = CatchUp::<Block> {
-			view_number: last_completed_view.number,
-			prepares,
-			commits,
-			base_hash,
-			base_number,
-		};
-
-		let full_catch_up = GossipMessage::CatchUp::<Block>(FullCatchUpMessage {
-			set_id: request.set_id,
-			message: catch_up,
-		});
-
-		(Some(full_catch_up), Action::Discard(cost::CATCH_UP_REPLY))
-	}
-
-	fn try_catch_up(&mut self, who: &PeerId) -> (Option<GossipMessage<Block>>, Option<Report>) {
-		log::trace!(target: "afp", "try_catch_up from {:?}", who);
-		let mut catch_up = None;
-		let mut report = None;
-
-		// if the peer is on the same set and ahead of us by a margin bigger
-		// than `CATCH_UP_THRESHOLD` then we should ask it for a catch up
-		// message. we only send catch-up requests to authorities, observers
-		// won't be able to reply since they don't follow the full GRANDPA
-		// protocol and therefore might not have the vote data available.
-		if let (Some(peer), Some(local_view)) = (self.peers.peer(who), &self.local_view) {
-			log::trace!(target: "afp", "try_catch_up peer: {:?}, local_view: {:?}", peer, local_view.view);
-			log::trace!(target: "afp", "try_catch_up {} [{:?} {:?}] [{:?} {:?}]", self.catch_up_config.request_allowed(&peer), peer.view.set_id, local_view.set_id, peer.view.view.0.saturating_sub(CATCH_UP_THRESHOLD), local_view.view.0 );
-			if self.catch_up_config.request_allowed(&peer) &&
-				peer.view.set_id == local_view.set_id &&
-				peer.view.view.0.saturating_sub(CATCH_UP_THRESHOLD) > local_view.view.0
-			{
-				// send catch up request if allowed
-				let view = peer.view.view.0 - 1; // peer.view.view is > 0
-				let request = CatchUpRequestMessage { set_id: peer.view.set_id, view: View(view) };
-
-				log::trace!(target: "afp", "try_catch_up sending request: {:?}", request);
-
-				let (catch_up_allowed, catch_up_report) = self.note_catch_up_request(who, &request);
-
-				if catch_up_allowed {
-					debug!(target: "afp", "Sending catch-up request for view {} to {}",
-						   view,
-						   who,
-					);
-
-					catch_up = Some(GossipMessage::<Block>::CatchUpRequest(request));
-				}
-
-				report = catch_up_report;
-			}
-		}
-
-		log::trace!(target: "afp", "try_catch_up end with catch_up: {:?}", catch_up);
-		(catch_up, report)
-	}
+	// fn try_catch_up(&mut self, who: &PeerId) -> (Option<GossipMessage<Block>>, Option<Report>) {
+	// 	log::trace!(target: "afp", "try_catch_up from {:?}", who);
+	// 	let mut catch_up = None;
+	// 	let mut report = None;
+	//
+	// 	// if the peer is on the same set and ahead of us by a margin bigger
+	// 	// than `CATCH_UP_THRESHOLD` then we should ask it for a catch up
+	// 	// message. we only send catch-up requests to authorities, observers
+	// 	// won't be able to reply since they don't follow the full GRANDPA
+	// 	// protocol and therefore might not have the vote data available.
+	// 	if let (Some(peer), Some(local_view)) = (self.peers.peer(who), &self.local_view) {
+	// 		log::trace!(target: "afp", "try_catch_up peer: {:?}, local_view: {:?}", peer,
+	// local_view.view); 		log::trace!(target: "afp", "try_catch_up {} [{:?} {:?}] [{:?} {:?}]",
+	// self.catch_up_config.request_allowed(&peer), peer.view.set_id, local_view.set_id,
+	// peer.view.view.0.saturating_sub(CATCH_UP_THRESHOLD), local_view.view.0 );
+	// 		if self.catch_up_config.request_allowed(&peer) &&
+	// 			peer.view.set_id == local_view.set_id &&
+	// 			peer.view.view.0.saturating_sub(CATCH_UP_THRESHOLD) > local_view.view.0
+	// 		{
+	// 			// send catch up request if allowed
+	// 			let view = peer.view.view.0 - 1; // peer.view.view is > 0
+	// 			let request = CatchUpRequestMessage { set_id: peer.view.set_id, view: View(view) };
+	//
+	// 			log::trace!(target: "afp", "try_catch_up sending request: {:?}", request);
+	//
+	// 			let (catch_up_allowed, catch_up_report) = self.note_catch_up_request(who, &request);
+	//
+	// 			if catch_up_allowed {
+	// 				debug!(target: "afp", "Sending catch-up request for view {} to {}",
+	// 					   view,
+	// 					   who,
+	// 				);
+	//
+	// 				catch_up = Some(GossipMessage::<Block>::CatchUpRequest(request));
+	// 			}
+	//
+	// 			report = catch_up_report;
+	// 		}
+	// 	}
+	//
+	// 	log::trace!(target: "afp", "try_catch_up end with catch_up: {:?}", catch_up);
+	// 	(catch_up, report)
+	// }
 
 	fn import_neighbor_message(
 		&mut self,
 		who: &PeerId,
 		update: NeighborPacket<NumberFor<Block>>,
-	) -> (Vec<Block::Hash>, Action<Block::Hash>, Option<GossipMessage<Block>>, Option<Report>) {
+	) -> (
+		Vec<Block::Hash>,
+		Action<Block::Hash>, /* Option<GossipMessage<Block>>, Option<Report> */
+	) {
 		let update_res = self.peers.update_peer_state(who, update);
 
 		let (cost_benefit, topics) = match update_res {
@@ -1060,17 +1065,17 @@ impl<Block: BlockT> Inner<Block> {
 			Err(misbehavior) => (misbehavior.cost(), None),
 		};
 
-		let (catch_up, report) = match update_res {
-			Ok(_) => self.try_catch_up(who),
-			_ => (None, None),
-		};
+		// let (catch_up, report) = match update_res {
+		// 	Ok(_) => self.try_catch_up(who),
+		// 	_ => (None, None),
+		// };
 
 		let neighbor_topics = topics.unwrap_or_default();
 
 		// always discard neighbor messages, it's only valid for one hop.
 		let action = Action::Discard(cost_benefit);
 
-		(neighbor_topics, action, catch_up, report)
+		(neighbor_topics, action /* catch_up, report */)
 	}
 
 	fn multicast_neighbor_packet(&self) -> MaybeMessage<Block> {
@@ -1101,38 +1106,38 @@ impl<Block: BlockT> Inner<Block> {
 		})
 	}
 
-	fn note_catch_up_request(
-		&mut self,
-		who: &PeerId,
-		catch_up_request: &CatchUpRequestMessage,
-	) -> (bool, Option<Report>) {
-		let report = match &self.pending_catch_up {
-			PendingCatchUp::Requesting { who: peer, instant, .. } => {
-				if instant.elapsed() <= CATCH_UP_REQUEST_TIMEOUT {
-					return (false, None)
-				} else {
-					// report peer for timeout
-					Some((peer.clone(), cost::CATCH_UP_REQUEST_TIMEOUT))
-				}
-			},
-			PendingCatchUp::Processing { instant, .. } => {
-				if instant.elapsed() < CATCH_UP_PROCESS_TIMEOUT {
-					return (false, None)
-				} else {
-					None
-				}
-			},
-			_ => None,
-		};
-
-		self.pending_catch_up = PendingCatchUp::Requesting {
-			who: who.clone(),
-			request: catch_up_request.clone(),
-			instant: Instant::now(),
-		};
-
-		(true, report)
-	}
+	// fn note_catch_up_request(
+	// 	&mut self,
+	// 	who: &PeerId,
+	// 	catch_up_request: &CatchUpRequestMessage,
+	// ) -> (bool, Option<Report>) {
+	// 	let report = match &self.pending_catch_up {
+	// 		PendingCatchUp::Requesting { who: peer, instant, .. } => {
+	// 			if instant.elapsed() <= CATCH_UP_REQUEST_TIMEOUT {
+	// 				return (false, None)
+	// 			} else {
+	// 				// report peer for timeout
+	// 				Some((peer.clone(), cost::CATCH_UP_REQUEST_TIMEOUT))
+	// 			}
+	// 		},
+	// 		PendingCatchUp::Processing { instant, .. } => {
+	// 			if instant.elapsed() < CATCH_UP_PROCESS_TIMEOUT {
+	// 				return (false, None)
+	// 			} else {
+	// 				None
+	// 			}
+	// 		},
+	// 		_ => None,
+	// 	};
+	//
+	// 	self.pending_catch_up = PendingCatchUp::Requesting {
+	// 		who: who.clone(),
+	// 		request: catch_up_request.clone(),
+	// 		instant: Instant::now(),
+	// 	};
+	//
+	// 	(true, report)
+	// }
 
 	/// The initial logic for filtering round messages follows the given state
 	/// transitions:
@@ -1339,31 +1344,31 @@ impl<Block: BlockT> GossipValidator<Block> {
 				},
 				Ok(GossipMessage::Neighbor(update)) => {
 					message_name = Some("neighbor");
-					let (topics, action, catch_up, report) = self
+					let (topics, action /* catch_up, report */) = self
 						.inner
 						.write()
 						.import_neighbor_message(who, update.into_neighbor_packet());
 
-					if let Some((peer, cost_benefit)) = report {
-						self.report(peer, cost_benefit);
-					}
+					// if let Some((peer, cost_benefit)) = report {
+					// 	self.report(peer, cost_benefit);
+					// }
 
 					broadcast_topics = topics;
-					peer_reply = catch_up;
+					// peer_reply = catch_up;
 					action
 				},
-				Ok(GossipMessage::CatchUp(ref message)) => {
-					message_name = Some("catch_up");
-					self.inner.write().validate_catch_up_message(who, message)
-				},
-				Ok(GossipMessage::CatchUpRequest(request)) => {
-					message_name = Some("catch_up_request");
-					let (reply, action) =
-						self.inner.write().handle_catch_up_request(who, request, &self.set_state);
-
-					peer_reply = reply;
-					action
-				},
+				// Ok(GossipMessage::CatchUp(ref message)) => {
+				// 	message_name = Some("catch_up");
+				// 	self.inner.write().validate_catch_up_message(who, message)
+				// },
+				// Ok(GossipMessage::CatchUpRequest(request)) => {
+				// 	message_name = Some("catch_up_request");
+				// 	let (reply, action) =
+				// 		self.inner.write().handle_catch_up_request(who, request, &self.set_state);
+				//
+				// 	peer_reply = reply;
+				// 	action
+				// },
 				Err(e) => {
 					message_name = None;
 					debug!(target: "afp", "Error decoding message: {}", e);

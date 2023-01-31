@@ -3,7 +3,7 @@ use std::{
 	sync::Arc,
 };
 
-use finality_jasmine::leader::{self, Error as JasmineError, VoterSet};
+use finality_jasmine::{messages, BlockNumberOps, Error as JasmineError, VoterSet};
 use parity_scale_codec::{Decode, Encode};
 use sp_blockchain::{Error as ClientError, HeaderBackend};
 use sp_finality_jasmine::AuthorityId;
@@ -51,13 +51,13 @@ impl<Block: BlockT> JasmineJustification<Block> {
 		voters: &VoterSet<AuthorityId>,
 	) -> Result<JasmineJustification<Block>, ClientError>
 	where
-		NumberFor<Block>: leader::BlockNumberOps,
+		NumberFor<Block>: BlockNumberOps,
 	{
 		let justification = JasmineJustification::<Block>::decode(&mut &*encoded)
 			.map_err(|_| ClientError::JustificationDecode)?;
 
-		if (justification.f_commit.target_hash, justification.f_commit.target_number)
-			!= finalized_target
+		if (justification.f_commit.target_hash, justification.f_commit.target_number) !=
+			finalized_target
 		{
 			let msg = "invalid commit target in jasmine justification".to_string();
 			Err(ClientError::BadJustification(msg))
@@ -69,7 +69,7 @@ impl<Block: BlockT> JasmineJustification<Block> {
 	/// Validate the commit and the votes' ancestry proofs.
 	pub fn verify(&self, set_id: u64, authorities: &AuthorityList) -> Result<(), ClientError>
 	where
-		NumberFor<Block>: leader::BlockNumberOps,
+		NumberFor<Block>: BlockNumberOps,
 	{
 		let voters = VoterSet::new(authorities.to_vec())
 			.ok_or(ClientError::Consensus(sp_consensus::Error::InvalidAuthoritiesSet))?;
@@ -84,32 +84,33 @@ impl<Block: BlockT> JasmineJustification<Block> {
 		voters: &VoterSet<AuthorityId>,
 	) -> Result<(), ClientError>
 	where
-		NumberFor<Block>: leader::BlockNumberOps,
+		NumberFor<Block>: BlockNumberOps,
 	{
-		let mut buf = Vec::new();
-		for signed in self.f_commit.commits.iter() {
-			if !sp_finality_jasmine::check_message_signature_with_buffer(
-				&leader::Message::Commit(signed.commit.clone()),
-				&signed.id,
-				&signed.signature,
-				self.view,
-				set_id,
-				&mut buf,
-			) {
-				return Err(ClientError::BadJustification(
-					// FIXME:
-					"invalid signature for commit in jasmine justification".to_string(),
-				));
-			}
+		// let mut buf = Vec::new();
+		for signed in self.f_commit.qcs.iter() {
+            // FIXME: valid the signatures of the QCs.
+			// if !sp_finality_jasmine::check_message_signature_with_buffer(
+			// 	&messages::Message::Commit(signed.commit.clone()),
+			// 	&signed.id,
+			// 	&signed.signature,
+			// 	self.view,
+			// 	set_id,
+			// 	&mut buf,
+			// ) {
+			// 	return Err(ClientError::BadJustification(
+			// 		// FIXME:
+			// 		"invalid signature for commit in jasmine justification".to_string(),
+			// 	))
+			// }
 
-			if self.f_commit.target_hash == signed.commit.target_hash {
-				continue;
+			if self.f_commit.target_hash == signed.hash {
+				continue
 			}
 
 			return Err(ClientError::BadJustification(
 				// FIXME:
 				"invalid commit ancestry proof in jasmine justification".to_string(),
-			));
+			))
 		}
 
 		Ok(())
