@@ -258,6 +258,7 @@ fn node_config<
 		force_authoring: false,
 		disable_grandpa: false,
         disable_pbft: false,
+        disable_tendermint: false,
 		dev_key_seed: key_seed,
 		tracing_targets: None,
 		tracing_receiver: Default::default(),
