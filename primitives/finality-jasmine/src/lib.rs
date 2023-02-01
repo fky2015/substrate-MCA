@@ -19,7 +19,7 @@ use log::debug;
 
 use finality_jasmine::messages;
 
-/// Key type for PBFT module
+/// Key type for JASMINE module
 pub const KEY_TYPE: sp_core::crypto::KeyTypeId = sp_application_crypto::KeyTypeId(*b"JSME");
 
 mod app {
@@ -32,23 +32,23 @@ sp_application_crypto::with_pair! {
 	pub type AuthorityPair = app::Pair;
 }
 
-/// Identify of a PBFT authority.
+/// Identify of a JASMINE authority.
 pub type AuthorityId = app::Public;
 
-/// Signature for a PBFT authority.
+/// Signature for a JASMINE authority.
 pub type AuthoritySignature = app::Signature;
 
-/// The `ConsensusEngineId` of PBFT.
+/// The `ConsensusEngineId` of JASMINE.
 pub const JASMINE_ENGINE_ID: ConsensusEngineId = *b"JSME";
 
-/// The storage key for the current set of weighted PBFT authorities.
+/// The storage key for the current set of weighted JASMINE authorities.
 /// The value stored is an encoded VersionedAuthorityList.
-pub const PBFT_AUTHORITIES_KEY: &'static [u8] = b":jasmine_authorities";
+pub const JASMINE_AUTHORITIES_KEY: &'static [u8] = b":jasmine_authorities";
 
 /// The index of an authority.
 pub type AuthorityIndex = u64;
 
-/// The monotonic identifier of a PBFT set of authorities.
+/// The monotonic identifier of a JASMINE set of authorities.
 pub type SetId = u64;
 
 /// The view indicator.
@@ -245,7 +245,7 @@ where
 }
 
 sp_api::decl_runtime_apis! {
-	/// APIs for integrating the PBFT finality gadget into runtimes.
+	/// APIs for integrating the JASMINE finality gadget into runtimes.
 	/// This should be implemented on the runtime side.
 	///
 	/// This is primarily used for negotiating authority-set changes for the

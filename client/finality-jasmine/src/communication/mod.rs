@@ -231,7 +231,7 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 
 				for signed in view.votes.iter() {
 					let message = gossip::GossipMessage::Vote(gossip::VoteMessage::<B> {
-						message: signed,
+						message: signed.clone().into(),
 						view: View(view.number),
 						set_id: SetId(set_id),
 					});
@@ -322,7 +322,7 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 										CONSENSUS_INFO;
 										"afp.received_propose";
 										"voter" => ?format!("{}", msg.message.id),
-										"target_number" => ?propose.target_number,
+										"target_number" => ?propose.target_height,
 										"target_hash" => ?propose.target_hash,
 									);
 								},
@@ -330,10 +330,20 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 									telemetry!(
 										telemetry;
 										CONSENSUS_INFO;
-										"afp.received_prevote";
+										"afp.received_vote";
 										"voter" => ?format!("{}", msg.message.id),
-										"target_number" => ?vote.target_number,
+										"target_number" => ?vote.target_height,
 										"target_hash" => ?vote.target_hash,
+									);
+								},
+								messages::Message::QC(qc) => {
+									telemetry!(
+										telemetry;
+										CONSENSUS_INFO;
+										"afp.received_qc";
+										"voter" => ?format!("{}", msg.message.id),
+										"target_number" => ?qc.height,
+										"target_hash" => ?qc.hash,
 									);
 								},
 							};
@@ -479,14 +489,14 @@ fn incoming_global<B: BlockT>(
 		      gossip_validator: &Arc<GossipValidator<B>>,
 		      voters: &VoterSet<AuthorityId>| {
 			if voters.len().get() <= TELEMETRY_VOTERS_LIMIT {
-				let precommits_signed_by: Vec<String> =
-					msg.message.auth_data.iter().map(move |(_, a)| format!("{}", a)).collect();
+				// let precommits_signed_by: Vec<String> =
+				// 	msg.message.auth_data.iter().map(move |(_, a)| format!("{}", a)).collect();
 
 				telemetry!(
 					telemetry;
 					CONSENSUS_INFO;
 					"afp.received_commit";
-					"contains_precommits_signed_by" => ?precommits_signed_by,
+					// "contains_precommits_signed_by" => ?precommits_signed_by,
 					"target_number" => ?msg.message.target_number.clone(),
 					"target_hash" => ?msg.message.target_hash.clone(),
 				);
@@ -514,7 +524,7 @@ fn incoming_global<B: BlockT>(
 			let gossip_engine = gossip_engine.clone();
 			let neighbor_sender = neighbor_sender.clone();
 			let cb = move |outcome| match outcome {
-				voter::CommitProcessingOutcome::Good(_) => {
+				messages::CommitProcessingOutcome::Good(_) => {
 					// if it checks out, gossip it. not accounting for
 					// any discrepancy between the actual ghost and the claimed
 					// finalized number.
@@ -527,7 +537,7 @@ fn incoming_global<B: BlockT>(
 
 					gossip_engine.lock().gossip_message(topic, notification.message.clone(), false);
 				},
-				CommitProcessingOutcome::Bad(_) => {
+				messages::CommitProcessingOutcome::Bad(_) => {
 					// report peer and do not gossip.
 					if let Some(who) = notification.sender.take() {
 						gossip_engine.lock().report(who, cost::INVALID_COMMIT);
@@ -659,6 +669,7 @@ impl<Block: BlockT> Sink<Message<Block>> for OutgoingMessages<Block> {
 				if let Some(commit) = self.has_voted.vote() {
 					*vote = commit.clone();
 				},
+			messages::Message::QC(ref mut qc) => unimplemented!(),
 		}
 
 		// when locals exist, sign messages on import
@@ -742,12 +753,12 @@ fn check_compact_commit<Block: BlockT>(
 ) -> Result<(), ReputationChange> {
 	// TODO: refactor
 	// check total len is not out of range.
-    let auth_data = msg.qcs[0].signatures;
-	if &auth_data.len() > &voters.len().get() {
+	let auth_data = &msg.qcs[0].signatures;
+	if auth_data.len() > voters.len().get() {
 		return Err(cost::MALFORMED_COMMIT)
 	}
 
-	for (_, ref id) in &auth_data {
+	for (_, ref id) in auth_data {
 		if let None = voters.get(id) {
 			debug!(target: "afp", "Skipping commit containing unknown voter {}", id);
 			return Err(cost::MALFORMED_COMMIT)
@@ -755,12 +766,12 @@ fn check_compact_commit<Block: BlockT>(
 	}
 
 	// Super majority.
-	if &auth_data.len() < &voters.threshold() {
+	if auth_data.len() < voters.threshold() {
 		return Err(cost::MALFORMED_COMMIT)
 	}
 
 	// check signatures on all contained precommits.
-    // FIXME: valid the signatures of the QCs.
+	// FIXME: valid the signatures of the QCs.
 	// let mut buf = Vec::new();
 	// for (i, (commit, &(ref sig, ref id))) in msg.commits.iter().zip(&msg.auth_data).enumerate() {
 	// 	use crate::communication::gossip::Misbehavior;

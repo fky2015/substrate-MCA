@@ -573,7 +573,7 @@ where
 					Box::new(global_comms.0),
 					Box::pin(global_comms.1),
 					(*self.env.voters).clone(),
-					last_completed_round.base,
+					last_completed_view.base,
 				);
 
 				// Repoint shared_voter_state so that the RPC endpoint can query the state
@@ -584,11 +584,13 @@ where
 					);
 				}
 
-				self.voter = Box::pin(async move {
+				let v = async move {
+                    // TODO:
 					voter.start().await;
 					afp_log!(true, "async voter exit.");
 					Ok(())
-				});
+				};
+				self.voter = Box::pin(v);
 			},
 			VoterSetState::Paused { .. } => self.voter = Box::pin(future::pending()),
 		};

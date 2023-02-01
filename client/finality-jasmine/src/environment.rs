@@ -34,8 +34,12 @@ use sp_runtime::{
 	traits::{Block as BlockT, Header as HeaderT, NumberFor, Zero},
 };
 
-type SignedCommit<Block> =
-	messages::SignedCommit<NumberFor<Block>, <Block as BlockT>::Hash, AuthoritySignature, AuthorityId>;
+type SignedCommit<Block> = messages::SignedCommit<
+	NumberFor<Block>,
+	<Block as BlockT>::Hash,
+	AuthoritySignature,
+	AuthorityId,
+>;
 
 type HistoricalVotes<Block> = Vec<SignedCommit<Block>>;
 
@@ -95,32 +99,34 @@ where
 	SC: SelectChainT<Block> + 'static,
 	NumberFor<Block>: BlockNumberOps,
 {
-	type Timer = Pin<Box<dyn Future<Output = Result<(), Self::Error>> + Send>>;
-	type BestChain = Pin<
-		Box<
-			dyn Future<Output = Result<Option<(NumberFor<Block>, Block::Hash)>, Self::Error>>
-				+ Send,
-		>,
+	type Timer = Box<dyn Future<Output = Result<(), Self::Error>> + Send + Unpin>;
+	type BestChain = Box<
+		dyn Future<
+				Output = Result<
+					Option<(NumberFor<Block>, Block::Hash, (Self::Number, Self::Hash))>,
+					Self::Error,
+				>,
+			> + Send
+			+ Unpin,
 	>;
 
 	type Id = AuthorityId;
 
 	type Signature = AuthoritySignature;
 
-	type In = Pin<
-		Box<
-			dyn Stream<
-					Item = Result<
-						::finality_jasmine::messages::SignedMessage<
-							NumberFor<Block>,
-							Block::Hash,
-							Self::Signature,
-							Self::Id,
-						>,
-						Self::Error,
+	type In = Box<
+		dyn Stream<
+				Item = Result<
+					::finality_jasmine::messages::SignedMessage<
+						NumberFor<Block>,
+						Block::Hash,
+						Self::Signature,
+						Self::Id,
 					>,
-				> + Send,
-		>,
+					Self::Error,
+				>,
+			> + Send
+			+ Unpin,
 	>;
 
 	type Out = Pin<
@@ -137,95 +143,96 @@ where
 		>,
 	>;
 
-	type Error = CommandOrError<Block::Hash, NumberFor<Block>>;
+	type Error = CommandOrError<Self::Hash, Self::Number>;
 
 	type Hash = Block::Hash;
 
 	type Number = NumberFor<Block>;
 
-	fn voter_data(&self) -> environment::VoterData<Self::Id> {
-		let local_id = local_authority_id(&self.voters, self.config.keystore.as_ref())
-			.expect("expect to have local_id to be a validtor.");
-
-		environment::VoterData { local_id }
-	}
-
-	fn round_data(&self, view: u64) -> environment::RoundData<Self::Id, Self::In, Self::Out> {
-		let local_id = local_authority_id(&self.voters, self.config.keystore.as_ref());
-
-		let has_voted = match self.voter_set_state.has_voted(view) {
-			HasVoted::Yes(id, vote) =>
-				if local_id.as_ref().map(|k| k == &id).unwrap_or(false) {
-					HasVoted::Yes(id, vote)
-				} else {
-					HasVoted::No
-				},
-			HasVoted::No => HasVoted::No,
-		};
-
-		// NOTE: we cache the local authority id that we'll be using to vote on the
-		// given round. this is done to make sure we only check for available keys
-		// from the keystore in this method when beginning the round, otherwise if
-		// the keystore state changed during the round (e.g. a key was removed) it
-		// could lead to internal state inconsistencies in the voter environment
-		// (e.g. we wouldn't update the voter set state after prevoting since there's
-		// no local authority id).
-		if let Some(id) = local_id.as_ref() {
-			self.voter_set_state.started_voting_on(view, id.clone());
-		}
-		// we can only sign when we have a local key in the authority set
-		// and we have a reference to the keystore.
-		let keystore = match (local_id.as_ref(), self.config.keystore.as_ref()) {
-			(Some(id), Some(keystore)) => Some((id.clone(), keystore.clone()).into()),
-			_ => None,
-		};
-
-		let (incoming, outgoing) = self.network.view_communication(
-			keystore,
-			crate::communication::View(view),
-			crate::communication::SetId(self.set_id),
-			self.voters.clone(),
-			has_voted,
-		);
-
-		// schedule incoming messages from the network to be held until
-		// corresponding blocks are imported.
-		let incoming = Box::pin(
-			UntilVoteTargetImported::new(
-				self.client.import_notification_stream(),
-				self.network.clone(),
-				self.client.clone(),
-				incoming,
-				"view",
-				None,
-			)
-			.map_err(Into::into),
-		);
-
-		// schedule network message cleanup when sink drops.
-		let outgoing = Box::pin(outgoing.sink_err_into());
-		environment::RoundData { local_id: local_id.unwrap(), incoming, outgoing }
-	}
+	// fn voter_data(&self) -> environment::VoterData<Self::Id> {
+	// 	let local_id = local_authority_id(&self.voters, self.config.keystore.as_ref())
+	// 		.expect("expect to have local_id to be a validtor.");
+	//
+	// 	environment::VoterData { local_id }
+	// }
+	//
+	// fn round_data(&self, view: u64) -> environment::RoundData<Self::Id, Self::In, Self::Out> {
+	// 	let local_id = local_authority_id(&self.voters, self.config.keystore.as_ref());
+	//
+	// 	let has_voted = match self.voter_set_state.has_voted(view) {
+	// 		HasVoted::Yes(id, vote) =>
+	// 			if local_id.as_ref().map(|k| k == &id).unwrap_or(false) {
+	// 				HasVoted::Yes(id, vote)
+	// 			} else {
+	// 				HasVoted::No
+	// 			},
+	// 		HasVoted::No => HasVoted::No,
+	// 	};
+	//
+	// 	// NOTE: we cache the local authority id that we'll be using to vote on the
+	// 	// given round. this is done to make sure we only check for available keys
+	// 	// from the keystore in this method when beginning the round, otherwise if
+	// 	// the keystore state changed during the round (e.g. a key was removed) it
+	// 	// could lead to internal state inconsistencies in the voter environment
+	// 	// (e.g. we wouldn't update the voter set state after prevoting since there's
+	// 	// no local authority id).
+	// 	if let Some(id) = local_id.as_ref() {
+	// 		self.voter_set_state.started_voting_on(view, id.clone());
+	// 	}
+	// 	// we can only sign when we have a local key in the authority set
+	// 	// and we have a reference to the keystore.
+	// 	let keystore = match (local_id.as_ref(), self.config.keystore.as_ref()) {
+	// 		(Some(id), Some(keystore)) => Some((id.clone(), keystore.clone()).into()),
+	// 		_ => None,
+	// 	};
+	//
+	// 	let (incoming, outgoing) = self.network.view_communication(
+	// 		keystore,
+	// 		crate::communication::View(view),
+	// 		crate::communication::SetId(self.set_id),
+	// 		self.voters.clone(),
+	// 		has_voted,
+	// 	);
+	//
+	// 	// schedule incoming messages from the network to be held until
+	// 	// corresponding blocks are imported.
+	// 	let incoming = Box::pin(
+	// 		UntilVoteTargetImported::new(
+	// 			self.client.import_notification_stream(),
+	// 			self.network.clone(),
+	// 			self.client.clone(),
+	// 			incoming,
+	// 			"view",
+	// 			None,
+	// 		)
+	// 		.map_err(Into::into),
+	// 	);
+	//
+	// 	// schedule network message cleanup when sink drops.
+	// 	let outgoing = Box::pin(outgoing.sink_err_into());
+	// 	environment::RoundData { local_id: local_id.unwrap(), incoming, outgoing }
+	// }
 
 	fn propose(&self, view: u64, block: Self::Hash) -> Self::BestChain {
-		let client = self.client.clone();
-		let authority_set = self.authority_set.clone();
-		let select_chain = self.select_chain.clone();
-		let set_id = self.set_id;
-		Box::pin(async move {
-			// NOTE: when we finalize an authority set change through the sync protocol the voter is
-			//       signaled asynchronously. therefore the voter could still vote in the next round
-			//       before activating the new set. the `authority_set` is updated immediately thus
-			//       we restrict the voter based on that.
-			if set_id != authority_set.set_id() {
-				return Ok(None)
-			}
-
-			// FIXME: error
-			next_target(block, client, authority_set, select_chain)
-				.await
-				.map_err(|e| e.into())
-		})
+		todo!();
+		// let client = self.client.clone();
+		// let authority_set = self.authority_set.clone();
+		// let select_chain = self.select_chain.clone();
+		// let set_id = self.set_id;
+		// Box::pin(async move {
+		// 	// NOTE: when we finalize an authority set change through the sync protocol the voter is
+		// 	//       signaled asynchronously. therefore the voter could still vote in the next round
+		// 	//       before activating the new set. the `authority_set` is updated immediately thus
+		// 	//       we restrict the voter based on that.
+		// 	if set_id != authority_set.set_id() {
+		// 		return Ok(None)
+		// 	}
+		//
+		// 	// FIXME: error
+		// 	next_target(block, client, authority_set, select_chain)
+		// 		.await
+		// 		.map_err(|e| e.into())
+		// })
 	}
 
 	// fn complete_f_commit(
@@ -281,6 +288,8 @@ where
 		number: Self::Number,
 		f_commit: FinalizedCommit<Block>,
 	) -> Result<(), Self::Error> {
+        
+        todo!();
 		finalize_block(
 			self.client.clone(),
 			&self.authority_set,
@@ -292,6 +301,55 @@ where
 			self.justification_sender.as_ref(),
 			self.telemetry.clone(),
 		)
+	}
+
+	type GlobalIn = Box<
+		dyn Stream<
+				Item = Result<
+					messages::GlobalMessageIn<Self::Hash, Self::Number, Self::Signature, Self::Id>,
+					Self::Error,
+				>,
+			> + Unpin
+			+ Send,
+	>;
+	type GlobalOut = Pin<
+		Box<
+			dyn Sink<
+					messages::GlobalMessageOut<Self::Hash, Self::Number, Self::Signature, Self::Id>,
+					Error = Self::Error,
+				> + Send,
+		>,
+	>;
+
+	fn init_voter(&self) -> environment::VoterData<Self::Id> {
+		todo!()
+	}
+
+	fn init_round(&self, view: u64) -> environment::RoundData<Self::Id, Self::In, Self::Out> {
+		todo!()
+	}
+
+	fn gathered_a_qc(
+		&self,
+		round: u64,
+		block: Self::Hash,
+		qc: finality_jasmine::messages::QC<Self::Number, Self::Hash, Self::Signature, Self::Id>,
+	) {
+		todo!()
+	}
+
+	fn get_block(
+		&self,
+		block: Self::Hash,
+	) -> Option<(Self::Number, Self::Hash, (Self::Number, Self::Hash))> {
+		todo!()
+	}
+
+	fn parent_key_block(
+		&self,
+		block: Self::Hash,
+	) -> Option<(Self::Number, Self::Hash, (Self::Number, Self::Hash))> {
+		todo!()
 	}
 }
 
@@ -543,7 +601,7 @@ impl<Block: BlockT> VoterSetState<Block> {
 		authority_set: &AuthoritySet<Block::Hash, NumberFor<Block>>,
 		genesis_state: (Block::Hash, NumberFor<Block>),
 	) -> VoterSetState<Block> {
-		let state = ViewState::genesis((genesis_state.1, genesis_state.0));
+		let state = (genesis_state.1, genesis_state.0);
 		let completed_views = CompletedViews::new(
 			CompletedView {
 				number: 0,

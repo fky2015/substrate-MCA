@@ -841,17 +841,15 @@ impl<Block: BlockT> Inner<Block> {
 			Consider::Accept => {},
 		}
 
-		if full.message.commits.len() != full.message.auth_data.len() ||
-			full.message.commits.is_empty()
-		{
+        // FIXME: maybe more strict checks here?
+		if full.message.qcs.is_empty() {
 			debug!(target: "afp", "Malformed compact commit");
 			telemetry!(
 				self.config.telemetry;
 				CONSENSUS_DEBUG;
 				"afp.malformed_compact_commit";
-				"commits_len" => ?full.message.commits.len(),
-				"auth_data_len" => ?full.message.auth_data.len(),
-				"commits_is_empty" => ?full.message.commits.is_empty(),
+				"commits_len" => ?full.message.qcs.len(),
+				"commits_is_empty" => ?full.message.qcs.is_empty(),
 			);
 			return Action::Discard(cost::MALFORMED_COMMIT)
 		}
@@ -1546,11 +1544,11 @@ impl<Block: BlockT> sc_network_gossip::Validator<Block> for GossipValidator<Bloc
 					true
 				},
 				Ok(GossipMessage::Neighbor(_)) => false,
-				Ok(GossipMessage::CatchUpRequest(_)) => false,
-				Ok(GossipMessage::CatchUp(msg)) => {
-					log::trace!(target:"afp", "catch-up message in not_allowed: {:?}", msg);
-					false
-				},
+				// Ok(GossipMessage::CatchUpRequest(_)) => false,
+				// Ok(GossipMessage::CatchUp(msg)) => {
+				// 	log::trace!(target:"afp", "catch-up message in not_allowed: {:?}", msg);
+				// 	false
+				// },
 				Ok(GossipMessage::Vote(_)) => false, // should not be the case.
 			}
 		})
