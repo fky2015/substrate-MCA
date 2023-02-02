@@ -1,4 +1,4 @@
-use node_template_runtime::{
+use node_jasmine_runtime::{
 	AccountId, AuraConfig, BalancesConfig, GenesisConfig, JasmineConfig, Signature, SudoConfig,
 	SystemConfig, WASM_BINARY,
 };
