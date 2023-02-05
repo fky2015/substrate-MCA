@@ -1,3 +1,6 @@
+// TODO:
+// 5. refix finality_jasmine's logic.
+// 6. build & test.
 use std::{
 	collections::{BTreeMap, HashMap},
 	marker::PhantomData,
@@ -21,13 +24,13 @@ use finality_jasmine::{
 use futures::{prelude::*, Future, Sink, Stream};
 use log::{debug, warn};
 use parity_scale_codec::{Decode, Encode};
-use parking_lot::RwLock;
+use parking_lot::{Mutex, MutexGuard, RwLock};
 use prometheus_endpoint::{register, Counter, Gauge, PrometheusError, U64};
 use sc_client_api::{apply_aux, backend::Backend as BackendT, utils::is_descendent_of};
 use sc_telemetry::{telemetry, TelemetryHandle, CONSENSUS_DEBUG, CONSENSUS_INFO};
 use sp_consensus::SelectChain as SelectChainT;
 use sp_finality_jasmine::{
-	AuthorityId, AuthoritySignature, JasmineApi, SetId, ViewNumber, JASMINE_ENGINE_ID,
+	AuthorityId, AuthoritySignature, JasmineApi, SetId, ViewNumber, JASMINE_ENGINE_ID, SharedLeaderInfo,
 };
 use sp_runtime::{
 	generic::BlockId,
@@ -56,6 +59,7 @@ pub(crate) struct Environment<Backend, Block: BlockT, C, N: NetworkT<Block>, SC>
 	pub(crate) metrics: Option<Metrics>,
 	pub(crate) justification_sender: Option<JasmineJustificationSender<Block>>,
 	pub(crate) telemetry: Option<TelemetryHandle>,
+	pub(crate) leader_info: SharedLeaderInfo<Block>,
 	pub(crate) _phantom: PhantomData<Backend>,
 }
 
@@ -100,33 +104,35 @@ where
 	NumberFor<Block>: BlockNumberOps,
 {
 	type Timer = Box<dyn Future<Output = Result<(), Self::Error>> + Send + Unpin>;
-	type BestChain = Box<
-		dyn Future<
-				Output = Result<
-					Option<(NumberFor<Block>, Block::Hash, (Self::Number, Self::Hash))>,
-					Self::Error,
-				>,
-			> + Send
-			+ Unpin,
+	type BestChain = Pin<
+		Box<
+			dyn Future<
+					Output = Result<
+						Option<(NumberFor<Block>, Block::Hash, (Self::Number, Self::Hash))>,
+						Self::Error,
+					>,
+				> + Send,
+		>,
 	>;
 
 	type Id = AuthorityId;
 
 	type Signature = AuthoritySignature;
 
-	type In = Box<
-		dyn Stream<
-				Item = Result<
-					::finality_jasmine::messages::SignedMessage<
-						NumberFor<Block>,
-						Block::Hash,
-						Self::Signature,
-						Self::Id,
+	type In = Pin<
+		Box<
+			dyn Stream<
+					Item = Result<
+						::finality_jasmine::messages::SignedMessage<
+							NumberFor<Block>,
+							Block::Hash,
+							Self::Signature,
+							Self::Id,
+						>,
+						Self::Error,
 					>,
-					Self::Error,
-				>,
-			> + Send
-			+ Unpin,
+				> + Send,
+		>,
 	>;
 
 	type Out = Pin<
@@ -149,160 +155,6 @@ where
 
 	type Number = NumberFor<Block>;
 
-	// fn voter_data(&self) -> environment::VoterData<Self::Id> {
-	// 	let local_id = local_authority_id(&self.voters, self.config.keystore.as_ref())
-	// 		.expect("expect to have local_id to be a validtor.");
-	//
-	// 	environment::VoterData { local_id }
-	// }
-	//
-	// fn round_data(&self, view: u64) -> environment::RoundData<Self::Id, Self::In, Self::Out> {
-	// 	let local_id = local_authority_id(&self.voters, self.config.keystore.as_ref());
-	//
-	// 	let has_voted = match self.voter_set_state.has_voted(view) {
-	// 		HasVoted::Yes(id, vote) =>
-	// 			if local_id.as_ref().map(|k| k == &id).unwrap_or(false) {
-	// 				HasVoted::Yes(id, vote)
-	// 			} else {
-	// 				HasVoted::No
-	// 			},
-	// 		HasVoted::No => HasVoted::No,
-	// 	};
-	//
-	// 	// NOTE: we cache the local authority id that we'll be using to vote on the
-	// 	// given round. this is done to make sure we only check for available keys
-	// 	// from the keystore in this method when beginning the round, otherwise if
-	// 	// the keystore state changed during the round (e.g. a key was removed) it
-	// 	// could lead to internal state inconsistencies in the voter environment
-	// 	// (e.g. we wouldn't update the voter set state after prevoting since there's
-	// 	// no local authority id).
-	// 	if let Some(id) = local_id.as_ref() {
-	// 		self.voter_set_state.started_voting_on(view, id.clone());
-	// 	}
-	// 	// we can only sign when we have a local key in the authority set
-	// 	// and we have a reference to the keystore.
-	// 	let keystore = match (local_id.as_ref(), self.config.keystore.as_ref()) {
-	// 		(Some(id), Some(keystore)) => Some((id.clone(), keystore.clone()).into()),
-	// 		_ => None,
-	// 	};
-	//
-	// 	let (incoming, outgoing) = self.network.view_communication(
-	// 		keystore,
-	// 		crate::communication::View(view),
-	// 		crate::communication::SetId(self.set_id),
-	// 		self.voters.clone(),
-	// 		has_voted,
-	// 	);
-	//
-	// 	// schedule incoming messages from the network to be held until
-	// 	// corresponding blocks are imported.
-	// 	let incoming = Box::pin(
-	// 		UntilVoteTargetImported::new(
-	// 			self.client.import_notification_stream(),
-	// 			self.network.clone(),
-	// 			self.client.clone(),
-	// 			incoming,
-	// 			"view",
-	// 			None,
-	// 		)
-	// 		.map_err(Into::into),
-	// 	);
-	//
-	// 	// schedule network message cleanup when sink drops.
-	// 	let outgoing = Box::pin(outgoing.sink_err_into());
-	// 	environment::RoundData { local_id: local_id.unwrap(), incoming, outgoing }
-	// }
-
-	fn propose(&self, view: u64, block: Self::Hash) -> Self::BestChain {
-		todo!();
-		// let client = self.client.clone();
-		// let authority_set = self.authority_set.clone();
-		// let select_chain = self.select_chain.clone();
-		// let set_id = self.set_id;
-		// Box::pin(async move {
-		// 	// NOTE: when we finalize an authority set change through the sync protocol the voter is
-		// 	//       signaled asynchronously. therefore the voter could still vote in the next round
-		// 	//       before activating the new set. the `authority_set` is updated immediately thus
-		// 	//       we restrict the voter based on that.
-		// 	if set_id != authority_set.set_id() {
-		// 		return Ok(None)
-		// 	}
-		//
-		// 	// FIXME: error
-		// 	next_target(block, client, authority_set, select_chain)
-		// 		.await
-		// 		.map_err(|e| e.into())
-		// })
-	}
-
-	// fn complete_f_commit(
-	// 	&self,
-	// 	view: u64,
-	// 	state: ViewState<Self::Number, Self::Hash>,
-	// 	base: (Self::Number, Self::Hash),
-	// 	f_commit: messages::FinalizedCommit<Self::Number, Self::Hash, Self::Signature, Self::Id>,
-	// ) -> Result<(), Self::Error> {
-	// 	self.update_voter_set_state(|voter_set_state| {
-	// 		let (completed_views, current_views) =
-	// 			if let VoterSetState::Live { completed_views, current_views } = voter_set_state {
-	// 				(completed_views, current_views)
-	// 			} else {
-	// 				let msg = "Voter acting while in paused state.";
-	// 				return Err(Error::Safety(msg.to_string()))
-	// 			};
-	//
-	// 		let mut completed_views = completed_views.clone();
-	// 		let mut current_views = current_views.clone();
-	//
-	// 		let votes = f_commit.commits;
-	//
-	// 		if let Some(_current_view) = current_views.get(&view) {
-	// 			// Currently, we don't have to use `CurrentViews`
-	// 		} else {
-	// 			current_views.insert(view, HasVoted::No);
-	// 			if view >= 1 {
-	// 				// Remove previews view if higher view present.
-	// 				current_views.remove(&(view - 1));
-	// 			}
-	// 		}
-	//
-	// 		completed_views.push(CompletedView { number: view, state: state.clone(), base, votes });
-	//
-	// 		let set_state = VoterSetState::<Block>::Live {
-	// 			completed_views,
-	// 			current_views: current_views.clone(),
-	// 		};
-	//
-	// 		crate::aux_schema::write_voter_set_state(&*self.client, &set_state)?;
-	//
-	// 		Ok(Some(set_state))
-	// 	})?;
-	//
-	// 	Ok(())
-	// }
-
-	fn finalize_block(
-		&self,
-		view: u64,
-		hash: Self::Hash,
-		number: Self::Number,
-		f_commit: FinalizedCommit<Block>,
-	) -> Result<(), Self::Error> {
-        
-        todo!();
-		finalize_block(
-			self.client.clone(),
-			&self.authority_set,
-			Some(self.config.justification_period.into()),
-			hash,
-			number,
-			(view, f_commit).into(),
-			false,
-			self.justification_sender.as_ref(),
-			self.telemetry.clone(),
-		)
-	}
-
 	type GlobalIn = Box<
 		dyn Stream<
 				Item = Result<
@@ -322,11 +174,108 @@ where
 	>;
 
 	fn init_voter(&self) -> environment::VoterData<Self::Id> {
-		todo!()
+		let local_id = local_authority_id(&self.voters, self.config.keystore.as_ref())
+			.expect("expect to have local_id to be a validtor.");
+
+		environment::VoterData { local_id }
 	}
 
 	fn init_round(&self, view: u64) -> environment::RoundData<Self::Id, Self::In, Self::Out> {
-		todo!()
+		let local_id = local_authority_id(&self.voters, self.config.keystore.as_ref());
+
+		let has_voted = match self.voter_set_state.has_voted(view) {
+			HasVoted::Yes(id, vote) =>
+				if local_id.as_ref().map(|k| k == &id).unwrap_or(false) {
+					HasVoted::Yes(id, vote)
+				} else {
+					HasVoted::No
+				},
+			HasVoted::No => HasVoted::No,
+		};
+
+		// NOTE: we cache the local authority id that we'll be using to vote on the
+		// given round. this is done to make sure we only check for available keys
+		// from the keystore in this method when beginning the round, otherwise if
+		// the keystore state changed during the round (e.g. a key was removed) it
+		// could lead to internal state inconsistencies in the voter environment
+		// (e.g. we wouldn't update the voter set state after prevoting since there's
+		// no local authority id).
+		if let Some(id) = local_id.as_ref() {
+			self.voter_set_state.started_voting_on(view, id.clone());
+		}
+		// we can only sign when we have a local key in the authority set
+		// and we have a reference to the keystore.
+		let keystore = match (local_id.as_ref(), self.config.keystore.as_ref()) {
+			(Some(id), Some(keystore)) => Some((id.clone(), keystore.clone()).into()),
+			_ => None,
+		};
+
+		let (incoming, outgoing) = self.network.view_communication(
+			keystore,
+			crate::communication::View(view),
+			crate::communication::SetId(self.set_id),
+			self.voters.clone(),
+			has_voted,
+		);
+
+		// schedule incoming messages from the network to be held until
+		// corresponding blocks are imported.
+		let incoming = Box::pin(
+			UntilVoteTargetImported::new(
+				self.client.import_notification_stream(),
+				self.network.clone(),
+				self.client.clone(),
+				incoming,
+				"round",
+				None,
+			)
+			.map_err(Into::into),
+		);
+
+		// schedule network message cleanup when sink drops.
+		let outgoing = Box::pin(outgoing.sink_err_into());
+		environment::RoundData { local_id: local_id.unwrap(), incoming, outgoing }
+	}
+
+	fn propose(&self, view: u64, block: Self::Hash) -> Self::BestChain {
+		let client = self.client.clone();
+		let authority_set = self.authority_set.clone();
+		let select_chain = self.select_chain.clone();
+		let set_id = self.set_id;
+		Box::pin(async move {
+			// NOTE: when we finalize an authority set change through the sync protocol the voter is
+			//       signaled asynchronously. therefore the voter could still vote in the next round
+			//       before activating the new set. the `authority_set` is updated immediately thus
+			//       we restrict the voter based on that.
+			if set_id != authority_set.set_id() {
+				return Ok(None)
+			}
+
+			// FIXME: error
+			next_target(block, client, authority_set, select_chain)
+				.await
+				.map_err(|e| e.into())
+		})
+	}
+
+	fn finalize_block(
+		&self,
+		view: u64,
+		hash: Self::Hash,
+		number: Self::Number,
+		f_commit: FinalizedCommit<Block>,
+	) -> Result<(), Self::Error> {
+		finalize_block(
+			self.client.clone(),
+			&self.authority_set,
+			Some(self.config.justification_period.into()),
+			hash,
+			number,
+			(view, f_commit).into(),
+			false,
+			self.justification_sender.as_ref(),
+			self.telemetry.clone(),
+		)
 	}
 
 	fn gathered_a_qc(
@@ -335,21 +284,47 @@ where
 		block: Self::Hash,
 		qc: finality_jasmine::messages::QC<Self::Number, Self::Hash, Self::Signature, Self::Id>,
 	) {
-		todo!()
+		self.leader_info.lock().gathered_a_qc(true, (qc.height, qc.hash));
 	}
 
 	fn get_block(
 		&self,
 		block: Self::Hash,
 	) -> Option<(Self::Number, Self::Hash, (Self::Number, Self::Hash))> {
-		todo!()
+		let header = self.client.header(BlockId::Hash(block)).unwrap();
+
+		if let Some(header) = header {
+			let qc = header.get_qc();
+			let number = header.number();
+			let hash = header.hash();
+			Some((*number, hash, qc))
+		} else {
+			None
+		}
 	}
 
 	fn parent_key_block(
 		&self,
 		block: Self::Hash,
 	) -> Option<(Self::Number, Self::Hash, (Self::Number, Self::Hash))> {
-		todo!()
+		let mut current_header = self.client.header(BlockId::Hash(block)).unwrap().unwrap();
+		let mut parent_hash = current_header.parent_hash().clone();
+
+		loop {
+			let parent_header = self.client.header(BlockId::Hash(parent_hash)).unwrap().unwrap();
+
+			if parent_header.number() == current_header.number() {
+				return None
+			}
+
+			if parent_header.is_key_block() {
+				let qc = parent_header.get_qc();
+				return Some((*parent_header.number(), parent_header.hash(), qc))
+			}
+
+			parent_hash = parent_header.parent_hash().clone();
+			current_header = parent_header;
+		}
 	}
 }
 
@@ -358,7 +333,7 @@ async fn next_target<Block, Backend, Client, SelectChain>(
 	client: Arc<Client>,
 	authority_set: SharedAuthoritySet<Block::Hash, NumberFor<Block>>,
 	select_chain: SelectChain,
-) -> Result<Option<(NumberFor<Block>, Block::Hash)>, Error>
+) -> Result<Option<(NumberFor<Block>, Block::Hash, (NumberFor<Block>, Block::Hash))>, Error>
 where
 	Backend: BackendT<Block>,
 	Block: BlockT,
@@ -383,38 +358,25 @@ where
 				.header(BlockId::Hash(best_hash))?
 				.expect("Header known to exist after `finality_target` call; qed");
 
-			if best_header == base_header {
-				Some(best_header)
+			// Get the most recent (highest number) key block.
+			let h = if best_header.is_key_block() {
+				best_header
 			} else {
-				let mut target_header = best_header.clone();
-				let mut parent_header = client
-					.header(BlockId::Hash(*target_header.parent_hash()))?
-					.expect("Header known to exist after `finality_target` call; qed");
-
-				// walk backwards until we find the target block
+				let mut current_header = best_header.clone();
 				loop {
-					if parent_header.number() < base_header.number() {
-						unreachable!(
-							"we are traversing backwards from a known block; \
-                         blocks are stored contiguously; \
-                         qed"
-						);
+					let parent_header = client
+						.header(BlockId::Hash(*current_header.parent_hash()))?
+						.expect("Header known to exist after `finality_target` call; qed");
+
+					if parent_header.is_key_block() {
+						break parent_header
 					}
 
-					if base_header.number() == parent_header.number() {
-						break
-					}
-
-					target_header = client
-						.header(BlockId::Hash(*target_header.parent_hash()))?
-						.expect("Header known to exist after `finality_target` call; qed");
-					parent_header = client
-						.header(BlockId::Hash(*target_header.parent_hash()))?
-						.expect("Header known to exist after `finality_target` call; qed");
+					current_header = parent_header;
 				}
+			};
 
-				Some(target_header)
-			}
+			Some(h)
 		},
 		Err(e) => {
 			warn!(target: "afp", "Encountered error finding best chain containing {:?}: {}", block, e);
@@ -422,7 +384,7 @@ where
 		},
 	};
 
-	Ok(result.map(|h| (*h.number(), h.hash())))
+	Ok(result.map(|h| (*h.number(), h.hash(), h.get_qc())))
 }
 
 /// Whether we've voted already during a prior run of the program.

@@ -4,6 +4,15 @@
 extern crate alloc;
 
 #[cfg(feature = "std")]
+use parking_lot::{Mutex, MutexGuard};
+#[cfg(feature = "std")]
+use std::sync::Arc;
+
+use tokio::sync::Notify;
+
+use sp_api::BlockT;
+
+#[cfg(feature = "std")]
 use serde::Serialize;
 
 use codec::{Codec, Decode, Encode, Input};
@@ -56,6 +65,73 @@ pub type ViewNumber = u64;
 
 /// A list of Grandpa authorities with associated weights.
 pub type AuthorityList = Vec<AuthorityId>;
+
+#[cfg(feature = "std")]
+pub struct LeaderInfo<N, D> {
+	pub is_leader: (bool, Option<(N, D)>),
+	pub generic_qc: Option<(N, D)>,
+	pub notify: Arc<Notify>,
+}
+
+#[cfg(feature = "std")]
+impl<N: Clone, D: Clone> LeaderInfo<N, D> {
+	pub fn new() -> Self {
+		let notify = Arc::new(Notify::new());
+		Self { is_leader: (false, None), generic_qc: None, notify }
+	}
+
+	pub fn become_leader(&mut self) {
+		self.is_leader.0 = true;
+	}
+
+	pub fn gathered_a_qc(&mut self, leader: bool, qc: (N, D)) {
+		if leader {
+			self.is_leader.0 = true;
+			self.is_leader.1 = Some(qc.clone());
+		} else {
+			self.is_leader.0 = false;
+			self.is_leader.1 = None;
+		}
+		self.generic_qc = Some(qc);
+	}
+
+	pub fn is_leader(&self) -> (bool, Option<(N, D)>) {
+		self.is_leader.clone()
+	}
+
+	pub fn generic_qc(&self) -> (N, D) {
+		self.generic_qc.clone().unwrap()
+	}
+
+	pub fn get_notify(&self) -> Arc<Notify> {
+		self.notify.clone()
+	}
+
+	pub fn notify(&self) {
+		self.notify.notify_one();
+	}
+}
+
+#[cfg(feature = "std")]
+#[derive(Clone)]
+pub struct SharedLeaderInfo<Block: BlockT> {
+	inner: Arc<Mutex<LeaderInfo<NumberFor<Block>, <Block as BlockT>::Hash>>>,
+}
+
+#[cfg(feature = "std")]
+impl<Block: BlockT> SharedLeaderInfo<Block> {
+	pub fn default() -> Self {
+		Self { inner: Arc::new(Mutex::new(LeaderInfo::new())) }
+	}
+
+	pub fn new(leader_info: LeaderInfo<NumberFor<Block>, <Block as BlockT>::Hash>) -> Self {
+		Self { inner: Arc::new(Mutex::new(leader_info)) }
+	}
+
+	pub fn lock(&self) -> MutexGuard<LeaderInfo<NumberFor<Block>, <Block as BlockT>::Hash>> {
+		self.inner.lock()
+	}
+}
 
 #[cfg_attr(feature = "std", derive(Serialize))]
 #[derive(Clone, Eq, PartialEq, Encode, Decode, RuntimeDebug)]

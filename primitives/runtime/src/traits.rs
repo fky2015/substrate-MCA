@@ -636,6 +636,16 @@ pub trait Header:
 		digest: Digest,
 	) -> Self;
 
+	/// Creates new header.
+	fn new_with_qc(
+		number: Self::Number,
+		extrinsics_root: Self::Hash,
+		state_root: Self::Hash,
+		parent_hash: Self::Hash,
+		digest: Digest,
+		qc: (Self::Number, Self::Hash),
+	) -> Self;
+
 	/// Returns a reference to the header number.
 	fn number(&self) -> &Self::Number;
 	/// Sets the header number.
@@ -665,6 +675,14 @@ pub trait Header:
 	fn hash(&self) -> Self::Hash {
 		<Self::Hashing as Hash>::hash_of(self)
 	}
+
+	fn get_qc(&self) -> (Self::Number, Self::Hash);
+
+    fn set_qc(&mut self, qc: (Self::Number, Self::Hash));
+
+	fn is_key_block(&self) -> bool;
+
+	fn set_is_key_block(&mut self, is_key_block: bool);
 }
 
 /// Something which fulfills the abstract idea of a Substrate block. It has types for

@@ -52,6 +52,10 @@ pub struct Header<Number: Copy + Into<U256> + TryFrom<U256>, Hash: HashT> {
 	pub extrinsics_root: Hash::Output,
 	/// A chain-specific digest of data useful for light clients or referencing auxiliary data.
 	pub digest: Digest,
+	/// QC
+	pub qc: (Number, Hash::Output),
+	/// key block flag
+	pub is_key_block: bool,
 }
 
 #[cfg(feature = "std")]
@@ -66,7 +70,10 @@ where
 			self.number.size_of(ops) +
 			self.state_root.size_of(ops) +
 			self.extrinsics_root.size_of(ops) +
-			self.digest.size_of(ops)
+			self.digest.size_of(ops) +
+			self.qc.0.size_of(ops) +
+			self.qc.1.size_of(ops) +
+			self.is_key_block.size_of(ops)
 	}
 }
 
@@ -160,6 +167,22 @@ where
 		&mut self.digest
 	}
 
+	fn get_qc(&self) -> (Number, Hash::Output) {
+		self.qc
+	}
+
+    fn set_qc(&mut self, qc: (Number, Hash::Output)) {
+        self.qc = qc;
+    }
+
+	fn is_key_block(&self) -> bool {
+		self.is_key_block
+	}
+
+	fn set_is_key_block(&mut self, is_key_block: bool) {
+		self.is_key_block = is_key_block;
+	}
+
 	fn new(
 		number: Self::Number,
 		extrinsics_root: Self::Hash,
@@ -167,7 +190,27 @@ where
 		parent_hash: Self::Hash,
 		digest: Digest,
 	) -> Self {
-		Self { number, extrinsics_root, state_root, parent_hash, digest }
+		let qc_number = TryFrom::try_from(U256::zero()).map_err(|_| "Error").unwrap();
+		Self {
+			number,
+			extrinsics_root,
+			state_root,
+			parent_hash,
+			digest,
+			is_key_block: false,
+			qc: (qc_number, Default::default()),
+		}
+	}
+
+	fn new_with_qc(
+		number: Self::Number,
+		extrinsics_root: Self::Hash,
+		state_root: Self::Hash,
+		parent_hash: Self::Hash,
+		digest: Digest,
+		qc: (Number, Hash::Output),
+	) -> Self {
+		Self { number, extrinsics_root, state_root, parent_hash, digest, qc, is_key_block: false }
 	}
 }
 

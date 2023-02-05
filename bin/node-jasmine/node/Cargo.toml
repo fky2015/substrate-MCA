@@ -33,8 +33,8 @@ sc-telemetry = { version = "4.0.0-dev", path = "../../../client/telemetry" }
 sc-keystore = { version = "4.0.0-dev", path = "../../../client/keystore" }
 sc-transaction-pool = { version = "4.0.0-dev", path = "../../../client/transaction-pool" }
 sc-transaction-pool-api = { version = "4.0.0-dev", path = "../../../client/transaction-pool/api" }
-sc-consensus-aura = { version = "0.10.0-dev", path = "../../../client/consensus/aura" }
-sp-consensus-aura = { version = "0.10.0-dev", path = "../../../primitives/consensus/aura" }
+sc-consensus-jasmine = { version = "0.10.0-dev", path = "../../../client/consensus/jasmine" }
+sp-consensus-jasmine = { version = "0.10.0-dev", path = "../../../primitives/consensus/jasmine" }
 sp-consensus = { version = "0.10.0-dev", path = "../../../primitives/consensus/common" }
 sc-consensus = { version = "0.10.0-dev", path = "../../../client/consensus/common" }
 sc-finality-grandpa = { version = "0.10.0-dev", path = "../../../client/finality-grandpa" }

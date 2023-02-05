@@ -2,13 +2,13 @@
 
 use node_jasmine_runtime::{self, opaque::Block, RuntimeApi};
 use sc_client_api::{BlockBackend, ExecutorProvider};
-use sc_consensus_aura::{ImportQueueParams, SlotProportion, StartAuraParams};
+use sc_consensus_jasmine::{ImportQueueParams, SlotProportion, StartJasmineParams};
 pub use sc_executor::NativeElseWasmExecutor;
-use sc_finality_jasmine::SharedVoterState;
+use sc_finality_jasmine::{SharedLeaderInfo, SharedVoterState};
 use sc_keystore::LocalKeystore;
 use sc_service::{error::Error as ServiceError, Configuration, TaskManager};
 use sc_telemetry::{Telemetry, TelemetryWorker};
-use sp_consensus_aura::sr25519::AuthorityPair as AuraPair;
+use sp_consensus_jasmine::sr25519::AuthorityPair as JasminePair;
 use std::{sync::Arc, time::Duration};
 
 // Our native executor instance.
@@ -46,7 +46,12 @@ pub fn new_partial(
 		sc_consensus::DefaultImportQueue<Block, FullClient>,
 		sc_transaction_pool::FullPool<Block, FullClient>,
 		(
-			sc_finality_jasmine::JasmineBlockImport<FullBackend, Block, FullClient, FullSelectChain>,
+			sc_finality_jasmine::JasmineBlockImport<
+				FullBackend,
+				Block,
+				FullClient,
+				FullSelectChain,
+			>,
 			sc_finality_jasmine::LinkHalf<Block, FullClient, FullSelectChain>,
 			Option<Telemetry>,
 		),
@@ -105,10 +110,10 @@ pub fn new_partial(
 		telemetry.as_ref().map(|x| x.handle()),
 	)?;
 
-	let slot_duration = sc_consensus_aura::slot_duration(&*client)?;
+	let slot_duration = sc_consensus_jasmine::slot_duration(&*client)?;
 
 	let import_queue =
-		sc_consensus_aura::import_queue::<AuraPair, _, _, _, _, _, _>(ImportQueueParams {
+		sc_consensus_jasmine::import_queue::<JasminePair, _, _, _, _, _, _>(ImportQueueParams {
 			block_import: jasmine_block_import.clone(),
 			justification_import: Some(Box::new(jasmine_block_import.clone())),
 			client: client.clone(),
@@ -116,7 +121,7 @@ pub fn new_partial(
 				let timestamp = sp_timestamp::InherentDataProvider::from_system_time();
 
 				let slot =
-					sp_consensus_aura::inherents::InherentDataProvider::from_timestamp_and_slot_duration(
+					sp_consensus_jasmine::inherents::InherentDataProvider::from_timestamp_and_slot_duration(
 						*timestamp,
 						slot_duration,
 					);
@@ -218,6 +223,8 @@ pub fn new_full(mut config: Configuration) -> Result<TaskManager, ServiceError> 
 	let enable_jasmine = !config.disable_jasmine;
 	let prometheus_registry = config.prometheus_registry().cloned();
 
+	let leader_info = SharedLeaderInfo::default();
+
 	let rpc_extensions_builder = {
 		let client = client.clone();
 		let pool = transaction_pool.clone();
@@ -254,10 +261,10 @@ pub fn new_full(mut config: Configuration) -> Result<TaskManager, ServiceError> 
 		let can_author_with =
 			sp_consensus::CanAuthorWithNativeVersion::new(client.executor().clone());
 
-		let slot_duration = sc_consensus_aura::slot_duration(&*client)?;
+		let slot_duration = sc_consensus_jasmine::slot_duration(&*client)?;
 
-		let aura = sc_consensus_aura::start_aura::<AuraPair, _, _, _, _, _, _, _, _, _, _, _>(
-			StartAuraParams {
+		let jasmine = sc_consensus_jasmine::start_jasmine::<JasminePair, _, _, _, _, _, _, _, _, _, _, _>(
+			StartJasmineParams {
 				slot_duration,
 				client,
 				select_chain,
@@ -267,7 +274,7 @@ pub fn new_full(mut config: Configuration) -> Result<TaskManager, ServiceError> 
 					let timestamp = sp_timestamp::InherentDataProvider::from_system_time();
 
 					let slot =
-						sp_consensus_aura::inherents::InherentDataProvider::from_timestamp_and_slot_duration(
+						sp_consensus_jasmine::inherents::InherentDataProvider::from_timestamp_and_slot_duration(
 							*timestamp,
 							slot_duration,
 						);
@@ -290,7 +297,7 @@ pub fn new_full(mut config: Configuration) -> Result<TaskManager, ServiceError> 
 		// fails we take down the service with it.
 		task_manager
 			.spawn_essential_handle()
-			.spawn_blocking("aura", Some("block-authoring"), aura);
+			.spawn_blocking("jasmine", Some("block-authoring"), jasmine);
 	}
 
 	// if the node isn't actively participating in consensus then it doesn't
@@ -324,6 +331,7 @@ pub fn new_full(mut config: Configuration) -> Result<TaskManager, ServiceError> 
 			prometheus_registry,
 			shared_voter_state: SharedVoterState::empty(),
 			telemetry: telemetry.as_ref().map(|x| x.handle()),
+			leader_info,
 		};
 
 		// the GRANDPA voter task is considered infallible, i.e.

@@ -214,7 +214,7 @@ pub fn finalize_block() -> Header {
 		digest.push(generic::DigestItem::Consensus(*b"babe", new_authorities.encode()));
 	}
 
-	Header { number, extrinsics_root, state_root: storage_root, parent_hash, digest }
+	Header { number, extrinsics_root, state_root: storage_root, parent_hash, digest, qc: (number, parent_hash), is_key_block: true }
 }
 
 #[inline(always)]

@@ -21,7 +21,7 @@ use sc_utils::mpsc::{tracing_unbounded, TracingUnboundedReceiver};
 use sp_api::ProvideRuntimeApi;
 use sp_blockchain::{Error as ClientError, HeaderMetadata};
 use sp_consensus::SelectChain;
-use sp_finality_jasmine::{AuthorityId, AuthorityList, AuthoritySignature, JasmineApi, SetId};
+use sp_finality_jasmine::{AuthorityId, AuthorityList, AuthoritySignature, JasmineApi, SetId, SharedLeaderInfo};
 use sp_keystore::{SyncCryptoStore, SyncCryptoStorePtr};
 use sp_runtime::{
 	generic::BlockId,
@@ -467,6 +467,7 @@ where
 		shared_voter_state: SharedVoterState<Block>,
 		justification_sender: JasmineJustificationSender<Block>,
 		telemetry: Option<TelemetryHandle>,
+		leader_info: SharedLeaderInfo<Block>,
 	) -> Self {
 		let metrics = match prometheus_registry.as_ref().map(Metrics::register) {
 			Some(Ok(metrics)) => Some(metrics),
@@ -490,6 +491,7 @@ where
 			metrics: metrics.as_ref().map(|m| m.environment.clone()),
 			justification_sender: Some(justification_sender),
 			telemetry: telemetry.clone(),
+			leader_info,
 			_phantom: PhantomData,
 		});
 
@@ -585,7 +587,7 @@ where
 				}
 
 				let v = async move {
-                    // TODO:
+					// TODO:
 					voter.start().await;
 					afp_log!(true, "async voter exit.");
 					Ok(())
@@ -645,6 +647,7 @@ where
 					metrics: self.env.metrics.clone(),
 					justification_sender: self.env.justification_sender.clone(),
 					telemetry: self.telemetry.clone(),
+					leader_info: self.env.leader_info.clone(),
 					_phantom: PhantomData,
 				});
 
@@ -738,6 +741,7 @@ pub struct JasmineParams<Block: BlockT, C, N, SC> {
 	pub shared_voter_state: SharedVoterState<Block>,
 	/// TelemetryHandle instance.
 	pub telemetry: Option<TelemetryHandle>,
+	pub leader_info: SharedLeaderInfo<Block>,
 }
 
 /// Returns the configuration value to put in
@@ -782,6 +786,7 @@ where
 		prometheus_registry,
 		shared_voter_state,
 		telemetry,
+		leader_info,
 	} = jasmine_params;
 
 	// NOTE: we have recently removed `run_jasmine_observer` from the public
@@ -855,6 +860,7 @@ where
 		shared_voter_state,
 		justification_sender,
 		telemetry,
+		leader_info,
 	);
 
 	let voter_work = voter_work.map(|res| match res {

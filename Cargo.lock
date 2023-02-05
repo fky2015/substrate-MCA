@@ -4763,7 +4763,7 @@ dependencies = [
  "sc-cli",
  "sc-client-api",
  "sc-consensus",
- "sc-consensus-aura",
+ "sc-consensus-jasmine",
  "sc-executor",
  "sc-finality-grandpa",
  "sc-finality-jasmine",
@@ -4778,7 +4778,7 @@ dependencies = [
  "sp-block-builder",
  "sp-blockchain",
  "sp-consensus",
- "sp-consensus-aura",
+ "sp-consensus-jasmine",
  "sp-core",
  "sp-finality-jasmine",
  "sp-inherents",
@@ -8526,11 +8526,49 @@ dependencies = [
  "sp-consensus",
  "sp-consensus-slots",
  "sp-core",
+ "sp-finality-jasmine",
  "sp-inherents",
  "sp-runtime",
  "sp-state-machine",
  "sp-timestamp",
  "substrate-test-runtime-client",
+ "thiserror",
+]
+
+[[package]]
+name = "sc-consensus-jasmine"
+version = "0.10.0-dev"
+dependencies = [
+ "async-trait",
+ "futures",
+ "log",
+ "parity-scale-codec",
+ "parking_lot 0.12.0",
+ "sc-block-builder",
+ "sc-client-api",
+ "sc-consensus",
+ "sc-consensus-events",
+ "sc-keystore",
+ "sc-network",
+ "sc-network-test",
+ "sc-telemetry",
+ "sp-api",
+ "sp-application-crypto",
+ "sp-block-builder",
+ "sp-blockchain",
+ "sp-consensus",
+ "sp-consensus-jasmine",
+ "sp-consensus-slots",
+ "sp-core",
+ "sp-inherents",
+ "sp-keyring",
+ "sp-keystore",
+ "sp-runtime",
+ "sp-timestamp",
+ "sp-tracing",
+ "substrate-prometheus-endpoint",
+ "substrate-test-runtime-client",
+ "tempfile",
  "thiserror",
 ]
 
@@ -10189,6 +10227,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "sp-consensus-jasmine"
+version = "0.10.0-dev"
+dependencies = [
+ "async-trait",
+ "parity-scale-codec",
+ "scale-info",
+ "sp-api",
+ "sp-application-crypto",
+ "sp-consensus",
+ "sp-consensus-slots",
+ "sp-inherents",
+ "sp-runtime",
+ "sp-std",
+ "sp-timestamp",
+]
+
+[[package]]
 name = "sp-consensus-pow"
 version = "0.10.0-dev"
 dependencies = [
@@ -10348,6 +10403,7 @@ dependencies = [
  "finality-jasmine",
  "log",
  "parity-scale-codec",
+ "parking_lot 0.12.0",
  "scale-info",
  "serde",
  "sp-api",
@@ -10356,6 +10412,7 @@ dependencies = [
  "sp-keystore",
  "sp-runtime",
  "sp-std",
+ "tokio",
 ]
 
 [[package]]

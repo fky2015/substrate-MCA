@@ -236,8 +236,10 @@ members = [
 	"bin/node-tendermint/runtime",
   # For Jasmine.
   "primitives/finality-jasmine",
+  "primitives/consensus/jasmine",
   "frame/jasmine",
   "client/consensus/events",
+  "client/consensus/jasmine",
   "client/finality-jasmine",
 	"bin/node-jasmine/node",
 	"bin/node-jasmine/pallets/template",

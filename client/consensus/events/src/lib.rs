@@ -40,10 +40,11 @@ use sc_telemetry::{telemetry, TelemetryHandle, CONSENSUS_DEBUG, CONSENSUS_INFO, 
 use sp_arithmetic::traits::BaseArithmetic;
 use sp_consensus::{CanAuthorWith, Proposer, SelectChain, SyncOracle};
 use sp_consensus_slots::{Slot, SlotDuration};
+use sp_finality_jasmine::LeaderInfo;
 use sp_inherents::{CreateInherentDataProviders, InherentIdentifier};
 use sp_runtime::{
 	generic::BlockId,
-	traits::{Block as BlockT, HashFor, Header as HeaderT},
+	traits::{Block as BlockT, HashFor, Header as HeaderT, NumberFor},
 };
 use sp_timestamp::Timestamp;
 use std::{fmt::Debug, ops::Deref, time::Duration};
@@ -103,13 +104,7 @@ pub trait SlotWorker<B: BlockT, Proof> {
 	///
 	/// Returns a future that resolves to a [`SlotResult`] iff a block was successfully built in
 	/// the slot. Otherwise `None` is returned.
-	async fn on_slot(&mut self, slot_info: SlotInfo<B>) -> Option<SlotResult<B, Proof>>;
-
-	/// Called when a new slot is triggered for in-between blocks.
-	///
-	/// Returns a future that resolves to a [`SlotResult`] iff a block was successfully built in
-	/// the slot. Otherwise `None` is returned.
-	async fn in_between_slot(&mut self, slot_info: SlotInfo<B>) -> Option<SlotResult<B, Proof>>;
+	async fn on_slot(&mut self, slot_info: SlotInfo<B>) -> (Option<SlotResult<B, Proof>>, bool);
 }
 
 /// A skeleton implementation for `SlotWorker` which tries to claim a slot at
@@ -170,14 +165,6 @@ pub trait SimpleSlotWorker<B: BlockT> {
 		epoch_data: &Self::EpochData,
 	) -> Option<Self::Claim>;
 
-	/// Tries to claim the given in-between slot, returning an object with claim data if successful.
-	async fn claim_in_between_slot(
-		&self,
-		header: &B::Header,
-		slot: Slot,
-		epoch_data: &Self::EpochData,
-	) -> Option<Self::Claim>;
-
 	/// Notifies the given slot. Similar to `claim_slot`, but will be called no matter whether we
 	/// need to author blocks or not.
 	fn notify_slot(&self, _header: &B::Header, _slot: Slot, _epoch_data: &Self::EpochData) {}
@@ -227,17 +214,26 @@ pub trait SimpleSlotWorker<B: BlockT> {
 	/// Remaining duration for proposing.
 	fn proposing_remaining_duration(&self, slot_info: &SlotInfo<B>) -> Duration;
 
+	/// Get current leader info.
+	fn leader_info(&self) -> LeaderInfo<NumberFor<B>, B::Hash>;
+
 	/// Implements [`SlotWorker::on_slot`].
 	async fn on_slot(
 		&mut self,
 		slot_info: SlotInfo<B>,
-	) -> Option<SlotResult<B, <Self::Proposer as Proposer<B>>::Proof>>
+	) -> (Option<SlotResult<B, <Self::Proposer as Proposer<B>>::Proof>>, bool)
 	where
 		Self: Sync,
 	{
 		let (timestamp, slot) = (slot_info.timestamp, slot_info.slot);
 		let telemetry = self.telemetry();
 		let logging_target = self.logging_target();
+		let leader_info = self.leader_info();
+
+		if !leader_info.is_leader().0 {
+			// Not leader, skip
+			return (None, false)
+		}
 
 		let proposing_remaining_duration = self.proposing_remaining_duration(&slot_info);
 
@@ -247,7 +243,7 @@ pub trait SimpleSlotWorker<B: BlockT> {
 				"Skipping proposal slot {} since there's no time left to propose", slot,
 			);
 
-			return None
+			return (None, false)
 		} else {
 			Delay::new(proposing_remaining_duration)
 		};
@@ -270,7 +266,7 @@ pub trait SimpleSlotWorker<B: BlockT> {
 					"err" => ?err,
 				);
 
-				return None
+				return (None, false)
 			},
 		};
 
@@ -290,13 +286,13 @@ pub trait SimpleSlotWorker<B: BlockT> {
 				"authorities_len" => authorities_len,
 			);
 
-			return None
+			return (None, false)
 		}
 
-		let claim = self.claim_slot(&slot_info.chain_head, slot, &epoch_data).await?;
+		let claim = self.claim_slot(&slot_info.chain_head, slot, &epoch_data).await.unwrap();
 
 		if self.should_backoff(slot, &slot_info.chain_head) {
-			return None
+			return (None, false)
 		}
 
 		debug!(
@@ -327,7 +323,7 @@ pub trait SimpleSlotWorker<B: BlockT> {
 					"err" => ?err
 				);
 
-				return None
+				return (None, false)
 			},
 		};
 
@@ -350,7 +346,7 @@ pub trait SimpleSlotWorker<B: BlockT> {
 			Either::Left((Err(err), _)) => {
 				warn!(target: logging_target, "Proposing failed: {}", err);
 
-				return None
+				return (None, false)
 			},
 			Either::Right(_) => {
 				info!(
@@ -370,7 +366,7 @@ pub trait SimpleSlotWorker<B: BlockT> {
 					"slot" => *slot,
 				);
 
-				return None
+				return (None, false)
 			},
 		};
 
@@ -381,242 +377,23 @@ pub trait SimpleSlotWorker<B: BlockT> {
 		// }
 
 		let (block, storage_proof) = (proposal.block, proposal.proof);
-		let (header, body) = block.deconstruct();
+		let (mut header, body) = block.deconstruct();
 		let header_num = *header.number();
 		let header_hash = header.hash();
 		let parent_hash = *header.parent_hash();
 
-		let block_import_params = match self
-			.block_import_params(
-				header,
-				&header_hash,
-				body.clone(),
-				proposal.storage_changes,
-				claim,
-				epoch_data,
-			)
-			.await
-		{
-			Ok(bi) => bi,
-			Err(err) => {
-				warn!(target: logging_target, "Failed to create block import params: {}", err);
-
-				return None
-			},
-		};
-
-		info!(
-			target: logging_target,
-			"🔖 Pre-sealed block for proposal at {}. Hash now {:?}, previously {:?}.",
-			header_num,
-			block_import_params.post_hash(),
-			header_hash,
-		);
-
-		telemetry!(
-			telemetry;
-			CONSENSUS_INFO;
-			"slots.pre_sealed_block";
-			"header_num" => ?header_num,
-			"hash_now" => ?block_import_params.post_hash(),
-			"hash_previously" => ?header_hash,
-		);
-
-		let header = block_import_params.post_header();
-		match self.block_import().import_block(block_import_params, Default::default()).await {
-			Ok(res) => {
-				res.handle_justification(
-					&header.hash(),
-					*header.number(),
-					self.justification_sync_link(),
-				);
-			},
-			Err(err) => {
-				warn!(
-					target: logging_target,
-					"Error with block built on {:?}: {}", parent_hash, err,
-				);
-
-				telemetry!(
-					telemetry;
-					CONSENSUS_WARN;
-					"slots.err_with_block_built_on";
-					"hash" => ?parent_hash,
-					"err" => ?err,
-				);
-			},
-		}
-
-		Some(SlotResult { block: B::new(header, body), storage_proof })
-	}
-
-	/// Implements [`SlotWorker::in_between_slot`].
-	async fn in_between_slot(
-		&mut self,
-		slot_info: SlotInfo<B>,
-	) -> Option<SlotResult<B, <Self::Proposer as Proposer<B>>::Proof>>
-	where
-		Self: Sync,
-	{
-		let (timestamp, slot) = (slot_info.timestamp, slot_info.slot);
-		let telemetry = self.telemetry();
-		let logging_target = self.logging_target();
-
-		// TODO: maybe need to change.
-		let proposing_remaining_duration = self.proposing_remaining_duration(&slot_info);
-
-		let proposing_remaining = if proposing_remaining_duration == Duration::default() {
-			debug!(
-				target: logging_target,
-				"Skipping proposal slot {} since there's no time left to propose", slot,
-			);
-
-			return None
+		let mut is_key_block = false;
+		if let Some(qc) = leader_info.is_leader().1 {
+			// Generate a key block.
+			header.set_is_key_block(true);
+			header.set_qc(qc);
+			is_key_block = true;
 		} else {
-			Delay::new(proposing_remaining_duration)
-		};
-
-		let epoch_data = match self.epoch_data(&slot_info.chain_head, slot) {
-			Ok(epoch_data) => epoch_data,
-			Err(err) => {
-				warn!(
-					target: logging_target,
-					"Unable to fetch epoch data at block {:?}: {}",
-					slot_info.chain_head.hash(),
-					err,
-				);
-
-				telemetry!(
-					telemetry;
-					CONSENSUS_WARN;
-					"slots.unable_fetching_authorities";
-					"slot" => ?slot_info.chain_head.hash(),
-					"err" => ?err,
-				);
-
-				return None
-			},
-		};
-
-		// self.notify_slot(&slot_info.chain_head, slot, &epoch_data);
-
-		let authorities_len = self.authorities_len(&epoch_data);
-
-		if !self.force_authoring() &&
-			self.sync_oracle().is_offline() &&
-			authorities_len.map(|a| a > 1).unwrap_or(false)
-		{
-			debug!(target: logging_target, "Skipping proposal slot. Waiting for the network.");
-			telemetry!(
-				telemetry;
-				CONSENSUS_DEBUG;
-				"slots.skipping_proposal_slot";
-				"authorities_len" => authorities_len,
-			);
-
-			return None
+			// Generate a in-between block.
+			header.set_is_key_block(true);
+			let qc = leader_info.generic_qc();
+			header.set_qc(qc);
 		}
-
-		let claim = self.claim_in_between_slot(&slot_info.chain_head, slot, &epoch_data).await?;
-
-		debug!(
-			target: self.logging_target(),
-			"Starting authorship at slot {}; timestamp = {}",
-			slot,
-			*timestamp,
-		);
-
-		telemetry!(
-			telemetry;
-			CONSENSUS_DEBUG;
-			"slots.starting_authorship";
-			"slot_num" => *slot,
-			"timestamp" => *timestamp,
-		);
-
-		let proposer = match self.proposer(&slot_info.chain_head).await {
-			Ok(p) => p,
-			Err(err) => {
-				warn!(target: logging_target, "Unable to author block in slot {:?}: {}", slot, err,);
-
-				telemetry!(
-					telemetry;
-					CONSENSUS_WARN;
-					"slots.unable_authoring_block";
-					"slot" => *slot,
-					"err" => ?err
-				);
-
-				return None
-			},
-		};
-
-		let logs = self.pre_digest_data(slot, &claim);
-
-		// TODO: add in_between block info to inherent_data
-		let mut inherent_data = slot_info.inherent_data;
-		// `true` means this block is a in_between block.
-		inherent_data.put_data(IN_BETWEEN_BLOCK_IDENTIFIER, &true);
-
-		// TODO: add QC info to inherent_data
-
-		// deadline our production to 98% of the total time left for proposing. As we deadline
-		// the proposing below to the same total time left, the 2% margin should be enough for
-		// the result to be returned.
-		let proposing = proposer
-			.propose(
-				inherent_data,
-				sp_runtime::generic::Digest { logs },
-				proposing_remaining_duration.mul_f32(0.98),
-				None,
-			)
-			.map_err(|e| sp_consensus::Error::ClientImport(e.to_string()));
-
-		let proposal = match futures::future::select(proposing, proposing_remaining).await {
-			Either::Left((Ok(p), _)) => p,
-			Either::Left((Err(err), _)) => {
-				warn!(target: logging_target, "Proposing failed: {}", err);
-
-				return None
-			},
-			Either::Right(_) => {
-				info!(
-					target: logging_target,
-					"⌛️ Discarding proposal for slot {}; block production took too long", slot,
-				);
-				// If the node was compiled with debug, tell the user to use release optimizations.
-				#[cfg(build_type = "debug")]
-				info!(
-					target: logging_target,
-					"👉 Recompile your node in `--release` mode to mitigate this problem.",
-				);
-				telemetry!(
-					telemetry;
-					CONSENSUS_INFO;
-					"slots.discarding_proposal_took_too_long";
-					"slot" => *slot,
-				);
-
-				return None
-			},
-		};
-
-		// NOTE: skip empty block
-		if proposal.block.extrinsics().len() <= 1 {
-			debug!(target:"jasmine", "skip empty block");
-			return None
-		}
-
-		if proposal.block.extrinsics().len() <= 1 + MINIMAL_TRANSACTION_NUMBER {
-			debug!(target:"jasmine", "skip because the block has less than {} transactions", MINIMAL_TRANSACTION_NUMBER);
-			return None
-		}
-
-		let (block, storage_proof) = (proposal.block, proposal.proof);
-		let (header, body) = block.deconstruct();
-		let header_num = *header.number();
-		let header_hash = header.hash();
-		let parent_hash = *header.parent_hash();
 
 		let block_import_params = match self
 			.block_import_params(
@@ -633,7 +410,7 @@ pub trait SimpleSlotWorker<B: BlockT> {
 			Err(err) => {
 				warn!(target: logging_target, "Failed to create block import params: {}", err);
 
-				return None
+				return (None, false)
 			},
 		};
 
@@ -679,7 +456,7 @@ pub trait SimpleSlotWorker<B: BlockT> {
 			},
 		}
 
-		Some(SlotResult { block: B::new(header, body), storage_proof })
+		(Some(SlotResult { block: B::new(header, body), storage_proof }), is_key_block)
 	}
 }
 
@@ -697,15 +474,8 @@ impl<T: SimpleSlotWorker<B> + Send + Sync, B: BlockT>
 	async fn on_slot(
 		&mut self,
 		slot_info: SlotInfo<B>,
-	) -> Option<SlotResult<B, <T::Proposer as Proposer<B>>::Proof>> {
+	) -> (Option<SlotResult<B, <T::Proposer as Proposer<B>>::Proof>>, bool) {
 		self.0.on_slot(slot_info).await
-	}
-
-	async fn in_between_slot(
-		&mut self,
-		slot_info: SlotInfo<B>,
-	) -> Option<SlotResult<B, <T::Proposer as Proposer<B>>::Proof>> {
-		self.0.in_between_slot(slot_info).await
 	}
 }
 
@@ -760,7 +530,6 @@ pub async fn start_slot_worker<B, C, W, SO, CIDP, CAW, Proof>(
 	mut worker: W,
 	mut sync_oracle: SO,
 	create_inherent_data_providers: CIDP,
-	in_between_create_inherent_data_providers: CIDP,
 	can_author_with: CAW,
 ) where
 	B: BlockT,
@@ -771,20 +540,16 @@ pub async fn start_slot_worker<B, C, W, SO, CIDP, CAW, Proof>(
 	CIDP::InherentDataProviders: InherentDataProviderExt + Send,
 	CAW: CanAuthorWith<B> + Send,
 {
-	let mut slots =
-		Slots::new(slot_duration.as_duration(), create_inherent_data_providers, client.clone());
-
 	const IN_BETWEEN_DIVISION: u32 = 10;
-
-	let mut in_between_slots = Slots::new(
+	let mut slots = Slots::new(
 		slot_duration.as_duration() / IN_BETWEEN_DIVISION,
-		in_between_create_inherent_data_providers,
-		client,
+		create_inherent_data_providers,
+		client.clone(),
 	);
 
 	loop {
-		for i in 1..IN_BETWEEN_DIVISION {
-			let slot_info = match in_between_slots.next_slot().await {
+		for _ in 0..IN_BETWEEN_DIVISION {
+			let slot_info = match slots.next_slot().await {
 				Ok(r) => r,
 				Err(e) => {
 					warn!(target: "slots", "Error while polling for next in-between slot: {}", e);
@@ -808,35 +573,11 @@ pub async fn start_slot_worker<B, C, W, SO, CIDP, CAW, Proof>(
 					err,
 				);
 			} else {
-				let _ = worker.in_between_slot(slot_info).await;
+				let (_, is_key_block) = worker.on_slot(slot_info).await;
+				if is_key_block {
+					break
+				}
 			}
-		}
-
-		let slot_info = match slots.next_slot().await {
-			Ok(r) => r,
-			Err(e) => {
-				warn!(target: "slots", "Error while polling for next slot: {}", e);
-				return
-			},
-		};
-
-		if sync_oracle.is_major_syncing() {
-			debug!(target: "slots", "Skipping proposal slot due to sync.");
-			continue
-		}
-
-		if let Err(err) =
-			can_author_with.can_author_with(&BlockId::Hash(slot_info.chain_head.hash()))
-		{
-			warn!(
-				target: "slots",
-				"Unable to author block in slot {},. `can_author_with` returned: {} \
-				Probably a node update is required!",
-				slot_info.slot,
-				err,
-			);
-		} else {
-			let _ = worker.on_slot(slot_info).await;
 		}
 	}
 }
