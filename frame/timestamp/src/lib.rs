@@ -172,7 +172,7 @@ pub mod pallet {
 		/// - 1 storage deletion (codec `O(1)`).
 		/// # </weight>
 		fn on_finalize(_n: BlockNumberFor<T>) {
-			assert!(DidUpdate::<T>::take(), "Timestamp must be updated once in the block");
+			// assert!(DidUpdate::<T>::take(), "Timestamp must be updated once in the block");
 		}
 	}
 
@@ -200,12 +200,12 @@ pub mod pallet {
 		))]
 		pub fn set(origin: OriginFor<T>, #[pallet::compact] now: T::Moment) -> DispatchResult {
 			ensure_none(origin)?;
-			assert!(!DidUpdate::<T>::exists(), "Timestamp must be updated only once in the block");
+			// assert!(!DidUpdate::<T>::exists(), "Timestamp must be updated only once in the block");
 			let prev = Self::now();
-			assert!(
-				prev.is_zero() || now >= prev + T::MinimumPeriod::get(),
-				"Timestamp must increment by at least <MinimumPeriod> between sequential blocks"
-			);
+			// assert!(
+			// 	prev.is_zero() || now >= prev + T::MinimumPeriod::get(),
+			// 	"Timestamp must increment by at least <MinimumPeriod> between sequential blocks"
+			// );
 			Now::<T>::put(now);
 			DidUpdate::<T>::put(true);
 

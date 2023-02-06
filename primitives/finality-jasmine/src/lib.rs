@@ -86,14 +86,17 @@ impl<N: Clone, D: Clone> LeaderInfo<N, D> {
 		self.is_leader.0 = true;
 	}
 
-	pub fn gathered_a_qc(&mut self, leader: bool, qc: (N, D)) {
-		if leader {
-			self.is_leader.0 = true;
-			self.is_leader.1 = Some(qc.clone());
-		} else {
-			self.is_leader.0 = false;
-			self.is_leader.1 = None;
-		}
+	pub fn become_follower(&mut self) {
+		self.is_leader.0 = false;
+	}
+
+	pub fn become_leader_with_qc(&mut self, qc: (N, D)) {
+		self.is_leader.0 = true;
+		self.is_leader.1 = Some(qc.clone());
+		self.generic_qc = Some(qc);
+	}
+
+	pub fn gathered_a_qc(&mut self, qc: (N, D)) {
 		self.generic_qc = Some(qc);
 	}
 
@@ -134,9 +137,9 @@ impl<Block: BlockT> SharedLeaderInfo<Block> {
 		self.inner.lock()
 	}
 
-    pub fn leader_info(&self) -> LeaderInfo<NumberFor<Block>, <Block as BlockT>::Hash> {
-        self.inner.lock().clone()
-    }
+	pub fn leader_info(&self) -> LeaderInfo<NumberFor<Block>, <Block as BlockT>::Hash> {
+		self.inner.lock().clone()
+	}
 }
 
 #[cfg_attr(feature = "std", derive(Serialize))]

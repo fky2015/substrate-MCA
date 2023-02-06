@@ -1,6 +1,3 @@
-// TODO:
-// 5. refix finality_jasmine's logic.
-// 6. build & test.
 use std::{
 	collections::{BTreeMap, HashMap},
 	marker::PhantomData,
@@ -30,7 +27,8 @@ use sc_client_api::{apply_aux, backend::Backend as BackendT, utils::is_descenden
 use sc_telemetry::{telemetry, TelemetryHandle, CONSENSUS_DEBUG, CONSENSUS_INFO};
 use sp_consensus::SelectChain as SelectChainT;
 use sp_finality_jasmine::{
-	AuthorityId, AuthoritySignature, JasmineApi, SetId, ViewNumber, JASMINE_ENGINE_ID, SharedLeaderInfo,
+	AuthorityId, AuthoritySignature, JasmineApi, SetId, SharedLeaderInfo, ViewNumber,
+	JASMINE_ENGINE_ID,
 };
 use sp_runtime::{
 	generic::BlockId,
@@ -284,7 +282,25 @@ where
 		block: Self::Hash,
 		qc: finality_jasmine::messages::QC<Self::Number, Self::Hash, Self::Signature, Self::Id>,
 	) {
-		self.leader_info.lock().gathered_a_qc(true, (qc.height, qc.hash));
+		self.leader_info.lock().gathered_a_qc((qc.height, qc.hash));
+	}
+
+	fn update_state(
+		&self,
+		round: u64,
+		state: voter::CurrentState<Self::Number, Self::Hash, Self::Signature, Self::Id>,
+	) {
+		match state {
+			voter::CurrentState::Voter => {
+				self.leader_info.lock().become_follower();
+			},
+			voter::CurrentState::Leader => {
+				self.leader_info.lock().become_leader();
+			},
+			voter::CurrentState::LeaderWithQC(qc) => {
+				self.leader_info.lock().become_leader_with_qc((qc.height, qc.hash));
+			},
+		}
 	}
 
 	fn get_block(
@@ -294,6 +310,10 @@ where
 		let header = self.client.header(BlockId::Hash(block)).unwrap();
 
 		if let Some(header) = header {
+			if header.number() == &Zero::zero() {
+				return Some((Zero::zero(), header.hash(), (Zero::zero(), header.hash())))
+			}
+
 			let qc = header.get_qc();
 			let number = header.number();
 			let hash = header.hash();
@@ -308,6 +328,14 @@ where
 		block: Self::Hash,
 	) -> Option<(Self::Number, Self::Hash, (Self::Number, Self::Hash))> {
 		let mut current_header = self.client.header(BlockId::Hash(block)).unwrap().unwrap();
+		// Genesis block's parent is it's self.
+		if current_header.number() == &Zero::zero() {
+			return Some((
+				Zero::zero(),
+				current_header.hash(),
+				(Zero::zero(), current_header.hash()),
+			))
+		}
 		let mut parent_hash = current_header.parent_hash().clone();
 
 		loop {
@@ -317,6 +345,14 @@ where
 				return None
 			}
 
+            // Genesis block.
+			if parent_header.number() == &Zero::zero() {
+				return Some((
+					Zero::zero(),
+					parent_header.hash(),
+					(Zero::zero(), parent_header.hash()),
+				))
+			}
 			if parent_header.is_key_block() {
 				let qc = parent_header.get_qc();
 				return Some((*parent_header.number(), parent_header.hash(), qc))
@@ -340,6 +376,8 @@ where
 	Client: ClientForJasmine<Block, Backend>,
 	SelectChain: SelectChainT<Block> + 'static,
 {
+	debug!(target: "afj", "Finding best chain containing {:?}", block);
+
 	let base_header = match client.header(BlockId::Hash(block))? {
 		Some(h) => h,
 		None => {
@@ -357,6 +395,17 @@ where
 			let best_header = client
 				.header(BlockId::Hash(best_hash))?
 				.expect("Header known to exist after `finality_target` call; qed");
+
+			debug!(target: "afj", "Best chain containing {:?} is {:?}", block, best_header);
+
+			// Genesis block is always a key block.
+			if best_header.number() == &Zero::zero() {
+				return Ok(Some((
+					Zero::zero(),
+					best_header.hash(),
+					(Zero::zero(), best_header.hash()),
+				)))
+			}
 
 			// Get the most recent (highest number) key block.
 			let h = if best_header.is_key_block() {

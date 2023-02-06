@@ -128,6 +128,7 @@ where
 	/// Returns a future that fires when the next slot starts.
 	pub async fn next_slot(&mut self) -> Result<SlotInfo<Block>, Error> {
 		loop {
+			log::debug!(target: "events", "Starting new slot timer for duration {:?}", self.slot_duration);
 			self.inner_delay = match self.inner_delay.take() {
 				None => {
 					// schedule wait.
@@ -153,7 +154,7 @@ where
 				Ok(x) => x,
 				Err(e) => {
 					log::warn!(
-						target: "slots",
+						target: "events",
 						"Unable to author block in slot. No best block header: {}",
 						e,
 					);
@@ -170,7 +171,7 @@ where
 
 			if Instant::now() > ends_at {
 				log::warn!(
-					target: "slots",
+					target: "events",
 					"Creating inherent data providers took more time than we had left for the slot.",
 				);
 			}
@@ -179,8 +180,9 @@ where
 			let slot = inherent_data_providers.slot();
 			let inherent_data = inherent_data_providers.create_inherent_data()?;
 
-			// never yield the same slot twice.
-			if slot > self.last_slot {
+            log::debug!(target: "events", "slot: {:?}, self.last_slot: {:?}", slot, self.last_slot);
+			// (REMOVED) never yield the same slot twice.
+			// if slot > self.last_slot {
 				self.last_slot = slot;
 
 				break Ok(SlotInfo::new(
@@ -191,7 +193,7 @@ where
 					chain_head,
 					None,
 				))
-			}
+			// }
 		}
 	}
 }

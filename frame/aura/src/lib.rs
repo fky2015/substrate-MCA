@@ -89,7 +89,8 @@ pub mod pallet {
 			if let Some(new_slot) = Self::current_slot_from_digests() {
 				let current_slot = CurrentSlot::<T>::get();
 
-				assert!(current_slot < new_slot, "Slot must increase");
+                // (REMOVED)
+				// assert!(current_slot < new_slot, "Slot must increase");
 				CurrentSlot::<T>::put(new_slot);
 
 				if let Some(n_authorities) = <Authorities<T>>::decode_len() {
@@ -282,9 +283,9 @@ impl<T: Config> OnTimestampSet<T::Moment> for Pallet<T> {
 		let timestamp_slot = moment / slot_duration;
 		let timestamp_slot = Slot::from(timestamp_slot.saturated_into::<u64>());
 
-		assert!(
-			CurrentSlot::<T>::get() == timestamp_slot,
-			"Timestamp slot must match `CurrentSlot`"
-		);
+		// assert!(
+		// 	CurrentSlot::<T>::get() == timestamp_slot,
+		// 	"Timestamp slot must match `CurrentSlot`"
+		// );
 	}
 }

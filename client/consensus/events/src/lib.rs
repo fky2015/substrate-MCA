@@ -231,6 +231,7 @@ pub trait SimpleSlotWorker<B: BlockT> {
 		let leader_info = self.leader_info();
 
 		if !leader_info.is_leader().0 {
+			debug!(target: "afj", "Not leader, skip");
 			// Not leader, skip
 			return (None, false)
 		}
@@ -456,6 +457,8 @@ pub trait SimpleSlotWorker<B: BlockT> {
 			},
 		}
 
+		debug!(target:"afj", "header: {:?}, parent: {:?}, is_key_block {:?}", header.hash(), header.parent_hash(), is_key_block);
+
 		(Some(SlotResult { block: B::new(header, body), storage_proof }), is_key_block)
 	}
 }
@@ -540,7 +543,7 @@ pub async fn start_slot_worker<B, C, W, SO, CIDP, CAW, Proof>(
 	CIDP::InherentDataProviders: InherentDataProviderExt + Send,
 	CAW: CanAuthorWith<B> + Send,
 {
-	const IN_BETWEEN_DIVISION: u32 = 10;
+	const IN_BETWEEN_DIVISION: u32 = 6;
 	let mut slots = Slots::new(
 		slot_duration.as_duration() / IN_BETWEEN_DIVISION,
 		create_inherent_data_providers,
@@ -552,13 +555,15 @@ pub async fn start_slot_worker<B, C, W, SO, CIDP, CAW, Proof>(
 			let slot_info = match slots.next_slot().await {
 				Ok(r) => r,
 				Err(e) => {
-					warn!(target: "slots", "Error while polling for next in-between slot: {}", e);
+					warn!(target: "events", "Error while polling for next in-between slot: {}", e);
 					return
 				},
 			};
 
+			debug!(target: "events", "🕑 New events slot");
+
 			if sync_oracle.is_major_syncing() {
-				debug!(target: "slots", "Skipping proposal slot due to sync.");
+				debug!(target: "events", "Skipping proposal slot due to sync.");
 				continue
 			}
 
@@ -566,13 +571,14 @@ pub async fn start_slot_worker<B, C, W, SO, CIDP, CAW, Proof>(
 				can_author_with.can_author_with(&BlockId::Hash(slot_info.chain_head.hash()))
 			{
 				warn!(
-					target: "slots",
+					target: "events",
 					"Unable to author block in slot {},. `can_author_with` returned: {} \
 					Probably a node update is required!",
 					slot_info.slot,
 					err,
 				);
 			} else {
+				debug!(target: "events", "🕑 New slot for proposing at block #{:?} (in {:?})", slot_info.chain_head.number(), slot_info.chain_head.hash());
 				let (_, is_key_block) = worker.on_slot(slot_info).await;
 				if is_key_block {
 					break
