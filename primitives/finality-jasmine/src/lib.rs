@@ -8,6 +8,7 @@ use parking_lot::{Mutex, MutexGuard};
 #[cfg(feature = "std")]
 use std::sync::Arc;
 
+#[cfg(feature = "std")]
 use tokio::sync::Notify;
 
 use sp_api::BlockT;
@@ -67,6 +68,7 @@ pub type ViewNumber = u64;
 pub type AuthorityList = Vec<AuthorityId>;
 
 #[cfg(feature = "std")]
+#[derive(Clone)]
 pub struct LeaderInfo<N, D> {
 	pub is_leader: (bool, Option<(N, D)>),
 	pub generic_qc: Option<(N, D)>,
@@ -131,6 +133,10 @@ impl<Block: BlockT> SharedLeaderInfo<Block> {
 	pub fn lock(&self) -> MutexGuard<LeaderInfo<NumberFor<Block>, <Block as BlockT>::Hash>> {
 		self.inner.lock()
 	}
+
+    pub fn leader_info(&self) -> LeaderInfo<NumberFor<Block>, <Block as BlockT>::Hash> {
+        self.inner.lock().clone()
+    }
 }
 
 #[cfg_attr(feature = "std", derive(Serialize))]

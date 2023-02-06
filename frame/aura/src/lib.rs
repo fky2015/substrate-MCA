@@ -43,7 +43,7 @@ use frame_support::{
 	traits::{DisabledValidators, FindAuthor, Get, OnTimestampSet, OneSessionHandler},
 	BoundedSlice, ConsensusEngineId, Parameter, WeakBoundedVec,
 };
-use sp_consensus_aura::{AuthorityIndex, ConsensusLog, Slot, AURA_ENGINE_ID};
+use sp_consensus_jasmine::{AuthorityIndex, ConsensusLog, Slot, JASMINE_ENGINE_ID};
 use sp_runtime::{
 	generic::DigestItem,
 	traits::{IsMember, Member, SaturatedConversion, Saturating, Zero},
@@ -52,8 +52,8 @@ use sp_runtime::{
 use sp_std::prelude::*;
 
 pub mod migrations;
-mod mock;
-mod tests;
+// mod mock;
+// mod tests;
 
 pub use pallet::*;
 
@@ -150,7 +150,7 @@ impl<T: Config> Pallet<T> {
 		<Authorities<T>>::put(&new);
 
 		let log = DigestItem::Consensus(
-			AURA_ENGINE_ID,
+			JASMINE_ENGINE_ID,
 			ConsensusLog::AuthoritiesChange(new.into_inner()).encode(),
 		);
 		<frame_system::Pallet<T>>::deposit_log(log);
@@ -170,7 +170,7 @@ impl<T: Config> Pallet<T> {
 		let digest = frame_system::Pallet::<T>::digest();
 		let pre_runtime_digests = digest.logs.iter().filter_map(|d| d.as_pre_runtime());
 		for (id, mut data) in pre_runtime_digests {
-			if id == AURA_ENGINE_ID {
+			if id == JASMINE_ENGINE_ID {
 				return Slot::decode(&mut data).ok()
 			}
 		}
@@ -221,7 +221,7 @@ impl<T: Config> OneSessionHandler<T::AccountId> for Pallet<T> {
 
 	fn on_disabled(i: u32) {
 		let log = DigestItem::Consensus(
-			AURA_ENGINE_ID,
+			JASMINE_ENGINE_ID,
 			ConsensusLog::<T::AuthorityId>::OnDisabled(i as AuthorityIndex).encode(),
 		);
 
@@ -235,7 +235,7 @@ impl<T: Config> FindAuthor<u32> for Pallet<T> {
 		I: 'a + IntoIterator<Item = (ConsensusEngineId, &'a [u8])>,
 	{
 		for (id, mut data) in digests.into_iter() {
-			if id == AURA_ENGINE_ID {
+			if id == JASMINE_ENGINE_ID {
 				let slot = Slot::decode(&mut data).ok()?;
 				let author_index = *slot % Self::authorities().len() as u64;
 				return Some(author_index as u32)

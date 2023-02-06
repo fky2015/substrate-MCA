@@ -4,11 +4,12 @@ use node_jasmine_runtime::{self, opaque::Block, RuntimeApi};
 use sc_client_api::{BlockBackend, ExecutorProvider};
 use sc_consensus_jasmine::{ImportQueueParams, SlotProportion, StartJasmineParams};
 pub use sc_executor::NativeElseWasmExecutor;
-use sc_finality_jasmine::{SharedLeaderInfo, SharedVoterState};
+use sc_finality_jasmine::SharedVoterState;
 use sc_keystore::LocalKeystore;
 use sc_service::{error::Error as ServiceError, Configuration, TaskManager};
 use sc_telemetry::{Telemetry, TelemetryWorker};
 use sp_consensus_jasmine::sr25519::AuthorityPair as JasminePair;
+use sp_finality_jasmine::SharedLeaderInfo;
 use std::{sync::Arc, time::Duration};
 
 // Our native executor instance.
@@ -263,41 +264,45 @@ pub fn new_full(mut config: Configuration) -> Result<TaskManager, ServiceError> 
 
 		let slot_duration = sc_consensus_jasmine::slot_duration(&*client)?;
 
-		let jasmine = sc_consensus_jasmine::start_jasmine::<JasminePair, _, _, _, _, _, _, _, _, _, _, _>(
-			StartJasmineParams {
-				slot_duration,
-				client,
-				select_chain,
-				block_import,
-				proposer_factory,
-				create_inherent_data_providers: move |_, ()| async move {
-					let timestamp = sp_timestamp::InherentDataProvider::from_system_time();
+		let jasmine =
+			sc_consensus_jasmine::start_jasmine::<JasminePair, _, _, _, _, _, _, _, _, _, _, _>(
+				StartJasmineParams {
+					slot_duration,
+					client,
+					select_chain,
+					block_import,
+					proposer_factory,
+					create_inherent_data_providers: move |_, ()| async move {
+						let timestamp = sp_timestamp::InherentDataProvider::from_system_time();
 
-					let slot =
+						let slot =
 						sp_consensus_jasmine::inherents::InherentDataProvider::from_timestamp_and_slot_duration(
 							*timestamp,
 							slot_duration,
 						);
 
-					Ok((timestamp, slot))
+						Ok((timestamp, slot))
+					},
+					force_authoring,
+					backoff_authoring_blocks,
+					keystore: keystore_container.sync_keystore(),
+					can_author_with,
+					sync_oracle: network.clone(),
+					justification_sync_link: network.clone(),
+					block_proposal_slot_portion: SlotProportion::new(2f32 / 3f32),
+					max_block_proposal_slot_portion: None,
+					telemetry: telemetry.as_ref().map(|x| x.handle()),
+					leader_info: leader_info.clone(),
 				},
-				force_authoring,
-				backoff_authoring_blocks,
-				keystore: keystore_container.sync_keystore(),
-				can_author_with,
-				sync_oracle: network.clone(),
-				justification_sync_link: network.clone(),
-				block_proposal_slot_portion: SlotProportion::new(2f32 / 3f32),
-				max_block_proposal_slot_portion: None,
-				telemetry: telemetry.as_ref().map(|x| x.handle()),
-			},
-		)?;
+			)?;
 
 		// the AURA authoring task is considered essential, i.e. if it
 		// fails we take down the service with it.
-		task_manager
-			.spawn_essential_handle()
-			.spawn_blocking("jasmine", Some("block-authoring"), jasmine);
+		task_manager.spawn_essential_handle().spawn_blocking(
+			"jasmine",
+			Some("block-authoring"),
+			jasmine,
+		);
 	}
 
 	// if the node isn't actively participating in consensus then it doesn't

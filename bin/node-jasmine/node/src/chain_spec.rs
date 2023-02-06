@@ -3,7 +3,7 @@ use node_jasmine_runtime::{
 	SystemConfig, WASM_BINARY,
 };
 use sc_service::ChainType;
-use sp_consensus_aura::sr25519::AuthorityId as AuraId;
+use sp_consensus_jasmine::sr25519::AuthorityId as AuraId;
 use sp_core::{sr25519, Pair, Public};
 use sp_finality_jasmine::AuthorityId as JasmineId;
 use sp_runtime::traits::{IdentifyAccount, Verify};

@@ -63,16 +63,17 @@ use sp_runtime::{
 mod import_queue;
 
 pub use import_queue::{
-	build_verifier, import_queue, JasmineVerifier, BuildVerifierParams, CheckForEquivocation,
-	ImportQueueParams,
+	build_verifier, import_queue, BuildVerifierParams, CheckForEquivocation, ImportQueueParams,
+	JasmineVerifier,
 };
 pub use sc_consensus_events::SlotProportion;
 pub use sp_consensus::SyncOracle;
 pub use sp_consensus_jasmine::{
 	digests::CompatibleDigestItem,
 	inherents::{InherentDataProvider, InherentType as JasmineInherent, INHERENT_IDENTIFIER},
-	JasmineApi, ConsensusLog, SlotDuration, JASMINE_ENGINE_ID,
+	ConsensusLog, AuraApi, SlotDuration, JASMINE_ENGINE_ID,
 };
+use sp_finality_jasmine::{LeaderInfo, SharedLeaderInfo};
 
 type AuthorityId<P> = <P as Pair>::Public;
 
@@ -82,7 +83,7 @@ where
 	A: Codec,
 	B: BlockT,
 	C: AuxStore + ProvideRuntimeApi<B> + UsageProvider<B>,
-	C::Api: JasmineApi<B, A>,
+	C::Api: AuraApi<B, A>,
 {
 	let best_block_id = BlockId::Hash(client.usage_info().chain.best_hash);
 	client.runtime_api().slot_duration(&best_block_id).map_err(|err| err.into())
@@ -108,7 +109,7 @@ fn slot_author<P: Pair>(slot: Slot, authorities: &[AuthorityId<P>]) -> Option<&A
 }
 
 /// Parameters of [`start_jasmine`].
-pub struct StartJasmineParams<C, SC, I, PF, SO, L, CIDP, BS, CAW> {
+pub struct StartJasmineParams<C, SC, I, PF, SO, L, CIDP, BS, CAW, B: BlockT> {
 	/// The duration of a slot.
 	pub slot_duration: SlotDuration,
 	/// The client to interact with the chain.
@@ -144,10 +145,12 @@ pub struct StartJasmineParams<C, SC, I, PF, SO, L, CIDP, BS, CAW> {
 	pub max_block_proposal_slot_portion: Option<SlotProportion>,
 	/// Telemetry instance used to report telemetry metrics.
 	pub telemetry: Option<TelemetryHandle>,
+    /// Leader info
+	pub leader_info: SharedLeaderInfo<B>,
 }
 
 /// Start the jasmine worker. The returned future should be run in a futures executor.
-pub fn start_jasmine<P, B, C, SC, I, PF, SO, L, CIDP, BS, CAW, Error>(
+pub fn start_jasmine<P, B: BlockT, C, SC, I, PF, SO, L, CIDP, BS, CAW, Error>(
 	StartJasmineParams {
 		slot_duration,
 		client,
@@ -164,7 +167,8 @@ pub fn start_jasmine<P, B, C, SC, I, PF, SO, L, CIDP, BS, CAW, Error>(
 		block_proposal_slot_portion,
 		max_block_proposal_slot_portion,
 		telemetry,
-	}: StartJasmineParams<C, SC, I, PF, SO, L, CIDP, BS, CAW>,
+		leader_info,
+	}: StartJasmineParams<C, SC, I, PF, SO, L, CIDP, BS, CAW, B>,
 ) -> Result<impl Future<Output = ()>, sp_consensus::Error>
 where
 	P: Pair + Send + Sync,
@@ -172,7 +176,7 @@ where
 	P::Signature: TryFrom<Vec<u8>> + Hash + Member + Encode + Decode,
 	B: BlockT,
 	C: ProvideRuntimeApi<B> + BlockOf + AuxStore + HeaderBackend<B> + Send + Sync,
-	C::Api: JasmineApi<B, AuthorityId<P>>,
+	C::Api: AuraApi<B, AuthorityId<P>>,
 	SC: SelectChain<B>,
 	I: BlockImport<B, Transaction = sp_api::TransactionFor<C, B>> + Send + Sync + 'static,
 	PF: Environment<B, Error = Error> + Send + Sync + 'static,
@@ -197,6 +201,7 @@ where
 		telemetry,
 		block_proposal_slot_portion,
 		max_block_proposal_slot_portion,
+		leader_info,
 	});
 
 	Ok(sc_consensus_events::start_slot_worker(
@@ -210,7 +215,7 @@ where
 }
 
 /// Parameters of [`build_jasmine_worker`].
-pub struct BuildJasmineWorkerParams<C, I, PF, SO, L, BS> {
+pub struct BuildJasmineWorkerParams<C, I, PF, SO, L, BS, B: BlockT> {
 	/// The client to interact with the chain.
 	pub client: Arc<C>,
 	/// The block import.
@@ -238,6 +243,8 @@ pub struct BuildJasmineWorkerParams<C, I, PF, SO, L, BS> {
 	pub max_block_proposal_slot_portion: Option<SlotProportion>,
 	/// Telemetry instance used to report telemetry metrics.
 	pub telemetry: Option<TelemetryHandle>,
+    /// Leader info
+	pub leader_info: SharedLeaderInfo<B>,
 }
 
 /// Build the jasmine worker.
@@ -256,7 +263,8 @@ pub fn build_jasmine_worker<P, B, C, PF, I, SO, L, BS, Error>(
 		max_block_proposal_slot_portion,
 		telemetry,
 		force_authoring,
-	}: BuildJasmineWorkerParams<C, I, PF, SO, L, BS>,
+		leader_info,
+	}: BuildJasmineWorkerParams<C, I, PF, SO, L, BS, B>,
 ) -> impl sc_consensus_events::SimpleSlotWorker<
 	B,
 	Proposer = PF::Proposer,
@@ -269,7 +277,7 @@ pub fn build_jasmine_worker<P, B, C, PF, I, SO, L, BS, Error>(
 where
 	B: BlockT,
 	C: ProvideRuntimeApi<B> + BlockOf + AuxStore + HeaderBackend<B> + Send + Sync,
-	C::Api: JasmineApi<B, AuthorityId<P>>,
+	C::Api: AuraApi<B, AuthorityId<P>>,
 	PF: Environment<B, Error = Error> + Send + Sync + 'static,
 	PF::Proposer: Proposer<B, Error = Error, Transaction = sp_api::TransactionFor<C, B>>,
 	P: Pair + Send + Sync,
@@ -293,11 +301,12 @@ where
 		telemetry,
 		block_proposal_slot_portion,
 		max_block_proposal_slot_portion,
+		leader_info,
 		_key_type: PhantomData::<P>,
 	}
 }
 
-struct JasmineWorker<C, E, I, P, SO, L, BS> {
+struct JasmineWorker<C, E, I, P, SO, L, BS, B: BlockT> {
 	client: Arc<C>,
 	block_import: I,
 	env: E,
@@ -309,16 +318,17 @@ struct JasmineWorker<C, E, I, P, SO, L, BS> {
 	block_proposal_slot_portion: SlotProportion,
 	max_block_proposal_slot_portion: Option<SlotProportion>,
 	telemetry: Option<TelemetryHandle>,
+	leader_info: SharedLeaderInfo<B>,
 	_key_type: PhantomData<P>,
 }
 
 #[async_trait::async_trait]
 impl<B, C, E, I, P, Error, SO, L, BS> sc_consensus_events::SimpleSlotWorker<B>
-	for JasmineWorker<C, E, I, P, SO, L, BS>
+	for JasmineWorker<C, E, I, P, SO, L, BS, B>
 where
 	B: BlockT,
 	C: ProvideRuntimeApi<B> + BlockOf + HeaderBackend<B> + Sync,
-	C::Api: JasmineApi<B, AuthorityId<P>>,
+	C::Api: AuraApi<B, AuthorityId<P>>,
 	E: Environment<B, Error = Error> + Send + Sync,
 	E::Proposer: Proposer<B, Error = Error, Transaction = sp_api::TransactionFor<C, B>>,
 	I: BlockImport<B, Transaction = sp_api::TransactionFor<C, B>> + Send + Sync + 'static,
@@ -379,7 +389,7 @@ where
 	}
 
 	fn pre_digest_data(&self, slot: Slot, _claim: &Self::Claim) -> Vec<sp_runtime::DigestItem> {
-		vec![<DigestItem as CompatibleDigestItem<P::Signature>>::jasmine_pre_digest(slot)]
+		vec![<DigestItem as CompatibleDigestItem<P::Signature>>::aura_pre_digest(slot)]
 	}
 
 	async fn block_import_params(
@@ -417,7 +427,7 @@ where
 			.map_err(|_| sp_consensus::Error::InvalidSignature(signature, public))?;
 
 		let signature_digest_item =
-			<DigestItem as CompatibleDigestItem<P::Signature>>::jasmine_seal(signature);
+			<DigestItem as CompatibleDigestItem<P::Signature>>::aura_seal(signature);
 
 		let mut import_block = BlockImportParams::new(BlockOrigin::Own, header);
 		import_block.post_digests.push(signature_digest_item);
@@ -479,6 +489,10 @@ where
 			self.logging_target(),
 		)
 	}
+
+	fn leader_info(&self) -> LeaderInfo<NumberFor<B>, B::Hash> {
+		self.leader_info.leader_info()
+	}
 }
 
 fn jasmine_err<B: BlockT>(error: Error<B>) -> Error<B> {
@@ -533,7 +547,7 @@ pub fn find_pre_digest<B: BlockT, Signature: Codec>(header: &B::Header) -> Resul
 	let mut pre_digest: Option<Slot> = None;
 	for log in header.digest().logs() {
 		trace!(target: "jasmine", "Checking log {:?}", log);
-		match (CompatibleDigestItem::<Signature>::as_jasmine_pre_digest(log), pre_digest.is_some()) {
+		match (CompatibleDigestItem::<Signature>::as_aura_pre_digest(log), pre_digest.is_some()) {
 			(Some(_), true) => return Err(jasmine_err(Error::MultipleHeaders)),
 			(None, _) => trace!(target: "jasmine", "Ignoring digest not meant for us"),
 			(s, false) => pre_digest = s,
@@ -547,7 +561,7 @@ where
 	A: Codec + Debug,
 	B: BlockT,
 	C: ProvideRuntimeApi<B> + BlockOf,
-	C::Api: JasmineApi<B, A>,
+	C::Api: AuraApi<B, A>,
 {
 	client
 		.runtime_api()
@@ -558,355 +572,360 @@ where
 
 #[cfg(test)]
 mod tests {
-	use super::*;
-	use futures::executor;
-	use parking_lot::Mutex;
-	use sc_block_builder::BlockBuilderProvider;
-	use sc_client_api::BlockchainEvents;
-	use sc_consensus::BoxJustificationImport;
-	use sc_consensus_events::{BackoffAuthoringOnFinalizedHeadLagging, SimpleSlotWorker};
-	use sc_keystore::LocalKeystore;
-	use sc_network::config::ProtocolConfig;
-	use sc_network_test::{Block as TestBlock, *};
-	use sp_application_crypto::key_types::JASMINE;
-	use sp_consensus::{
-		AlwaysCanAuthor, DisableProofRecording, NoNetwork as DummyOracle, Proposal,
-	};
-	use sp_consensus_jasmine::sr25519::AuthorityPair;
-	use sp_inherents::InherentData;
-	use sp_keyring::sr25519::Keyring;
-	use sp_runtime::{
-		traits::{Block as BlockT, Header as _},
-		Digest,
-	};
-	use sp_timestamp::InherentDataProvider as TimestampInherentDataProvider;
-	use std::{
-		task::Poll,
-		time::{Duration, Instant},
-	};
-	use substrate_test_runtime_client::{
-		runtime::{Header, H256},
-		TestClient,
-	};
-
-	type Error = sp_blockchain::Error;
-
-	struct DummyFactory(Arc<TestClient>);
-	struct DummyProposer(u64, Arc<TestClient>);
-
-	impl Environment<TestBlock> for DummyFactory {
-		type Proposer = DummyProposer;
-		type CreateProposer = futures::future::Ready<Result<DummyProposer, Error>>;
-		type Error = Error;
-
-		fn init(&mut self, parent_header: &<TestBlock as BlockT>::Header) -> Self::CreateProposer {
-			futures::future::ready(Ok(DummyProposer(parent_header.number + 1, self.0.clone())))
-		}
-	}
-
-	impl Proposer<TestBlock> for DummyProposer {
-		type Error = Error;
-		type Transaction =
-			sc_client_api::TransactionFor<substrate_test_runtime_client::Backend, TestBlock>;
-		type Proposal = future::Ready<Result<Proposal<TestBlock, Self::Transaction, ()>, Error>>;
-		type ProofRecording = DisableProofRecording;
-		type Proof = ();
-
-		fn propose(
-			self,
-			_: InherentData,
-			digests: Digest,
-			_: Duration,
-			_: Option<usize>,
-		) -> Self::Proposal {
-			let r = self.1.new_block(digests).unwrap().build().map_err(|e| e.into());
-
-			future::ready(r.map(|b| Proposal {
-				block: b.block,
-				proof: (),
-				storage_changes: b.storage_changes,
-			}))
-		}
-	}
-
-	const SLOT_DURATION: u64 = 1000;
-
-	type JasmineVerifier = import_queue::JasmineVerifier<
-		PeersFullClient,
-		AuthorityPair,
-		AlwaysCanAuthor,
-		Box<
-			dyn CreateInherentDataProviders<
-				TestBlock,
-				(),
-				InherentDataProviders = (TimestampInherentDataProvider, InherentDataProvider),
-			>,
-		>,
-	>;
-	type JasminePeer = Peer<(), PeersClient>;
-
-	pub struct JasmineTestNet {
-		peers: Vec<JasminePeer>,
-	}
-
-	impl TestNetFactory for JasmineTestNet {
-		type Verifier = JasmineVerifier;
-		type PeerData = ();
-		type BlockImport = PeersClient;
-
-		/// Create new test network with peers and given config.
-		fn from_config(_config: &ProtocolConfig) -> Self {
-			JasmineTestNet { peers: Vec::new() }
-		}
-
-		fn make_verifier(
-			&self,
-			client: PeersClient,
-			_cfg: &ProtocolConfig,
-			_peer_data: &(),
-		) -> Self::Verifier {
-			let client = client.as_client();
-			let slot_duration = slot_duration(&*client).expect("slot duration available");
-
-			assert_eq!(slot_duration.as_millis() as u64, SLOT_DURATION);
-			import_queue::JasmineVerifier::new(
-				client,
-				Box::new(|_, _| async {
-					let timestamp = TimestampInherentDataProvider::from_system_time();
-					let slot = InherentDataProvider::from_timestamp_and_slot_duration(
-						*timestamp,
-						SlotDuration::from_millis(6000),
-					);
-
-					Ok((timestamp, slot))
-				}),
-				AlwaysCanAuthor,
-				CheckForEquivocation::Yes,
-				None,
-			)
-		}
-
-		fn make_block_import(
-			&self,
-			client: PeersClient,
-		) -> (
-			BlockImportAdapter<Self::BlockImport>,
-			Option<BoxJustificationImport<Block>>,
-			Self::PeerData,
-		) {
-			(client.as_block_import(), None, ())
-		}
-
-		fn peer(&mut self, i: usize) -> &mut JasminePeer {
-			&mut self.peers[i]
-		}
-
-		fn peers(&self) -> &Vec<JasminePeer> {
-			&self.peers
-		}
-		fn mut_peers<F: FnOnce(&mut Vec<JasminePeer>)>(&mut self, closure: F) {
-			closure(&mut self.peers);
-		}
-	}
-
-	#[test]
-	fn authoring_blocks() {
-		sp_tracing::try_init_simple();
-		let net = JasmineTestNet::new(3);
-
-		let peers = &[(0, Keyring::Alice), (1, Keyring::Bob), (2, Keyring::Charlie)];
-
-		let net = Arc::new(Mutex::new(net));
-		let mut import_notifications = Vec::new();
-		let mut jasmine_futures = Vec::new();
-
-		let mut keystore_paths = Vec::new();
-		for (peer_id, key) in peers {
-			let mut net = net.lock();
-			let peer = net.peer(*peer_id);
-			let client = peer.client().as_client();
-			let select_chain = peer.select_chain().expect("full client has a select chain");
-			let keystore_path = tempfile::tempdir().expect("Creates keystore path");
-			let keystore = Arc::new(
-				LocalKeystore::open(keystore_path.path(), None).expect("Creates keystore."),
-			);
-
-			SyncCryptoStore::sr25519_generate_new(&*keystore, JASMINE, Some(&key.to_seed()))
-				.expect("Creates authority key");
-			keystore_paths.push(keystore_path);
-
-			let environ = DummyFactory(client.clone());
-			import_notifications.push(
-				client
-					.import_notification_stream()
-					.take_while(|n| {
-						future::ready(!(n.origin != BlockOrigin::Own && n.header.number() < &5))
-					})
-					.for_each(move |_| future::ready(())),
-			);
-
-			let slot_duration = slot_duration(&*client).expect("slot duration available");
-
-			jasmine_futures.push(
-				start_jasmine::<AuthorityPair, _, _, _, _, _, _, _, _, _, _, _>(StartJasmineParams {
-					slot_duration,
-					block_import: client.clone(),
-					select_chain,
-					client,
-					proposer_factory: environ,
-					sync_oracle: DummyOracle,
-					justification_sync_link: (),
-					create_inherent_data_providers: |_, _| async {
-						let timestamp = TimestampInherentDataProvider::from_system_time();
-						let slot = InherentDataProvider::from_timestamp_and_slot_duration(
-							*timestamp,
-							SlotDuration::from_millis(6000),
-						);
-
-						Ok((timestamp, slot))
-					},
-					force_authoring: false,
-					backoff_authoring_blocks: Some(
-						BackoffAuthoringOnFinalizedHeadLagging::default(),
-					),
-					keystore,
-					can_author_with: sp_consensus::AlwaysCanAuthor,
-					block_proposal_slot_portion: SlotProportion::new(0.5),
-					max_block_proposal_slot_portion: None,
-					telemetry: None,
-				})
-				.expect("Starts jasmine"),
-			);
-		}
-
-		executor::block_on(future::select(
-			future::poll_fn(move |cx| {
-				net.lock().poll(cx);
-				Poll::<()>::Pending
-			}),
-			future::select(future::join_all(jasmine_futures), future::join_all(import_notifications)),
-		));
-	}
-
-	#[test]
-	fn authorities_call_works() {
-		let client = substrate_test_runtime_client::new();
-
-		assert_eq!(client.chain_info().best_number, 0);
-		assert_eq!(
-			authorities(&client, &BlockId::Number(0)).unwrap(),
-			vec![
-				Keyring::Alice.public().into(),
-				Keyring::Bob.public().into(),
-				Keyring::Charlie.public().into()
-			]
-		);
-	}
-
-	#[test]
-	fn current_node_authority_should_claim_slot() {
-		let net = JasmineTestNet::new(4);
-
-		let mut authorities = vec![
-			Keyring::Alice.public().into(),
-			Keyring::Bob.public().into(),
-			Keyring::Charlie.public().into(),
-		];
-
-		let keystore_path = tempfile::tempdir().expect("Creates keystore path");
-		let keystore = LocalKeystore::open(keystore_path.path(), None).expect("Creates keystore.");
-		let public = SyncCryptoStore::sr25519_generate_new(&keystore, AuthorityPair::ID, None)
-			.expect("Key should be created");
-		authorities.push(public.into());
-
-		let net = Arc::new(Mutex::new(net));
-
-		let mut net = net.lock();
-		let peer = net.peer(3);
-		let client = peer.client().as_client();
-		let environ = DummyFactory(client.clone());
-
-		let worker = JasmineWorker {
-			client: client.clone(),
-			block_import: client,
-			env: environ,
-			keystore: keystore.into(),
-			sync_oracle: DummyOracle.clone(),
-			justification_sync_link: (),
-			force_authoring: false,
-			backoff_authoring_blocks: Some(BackoffAuthoringOnFinalizedHeadLagging::default()),
-			telemetry: None,
-			_key_type: PhantomData::<AuthorityPair>,
-			block_proposal_slot_portion: SlotProportion::new(0.5),
-			max_block_proposal_slot_portion: None,
-		};
-
-		let head = Header::new(
-			1,
-			H256::from_low_u64_be(0),
-			H256::from_low_u64_be(0),
-			Default::default(),
-			Default::default(),
-		);
-		assert!(executor::block_on(worker.claim_slot(&head, 0.into(), &authorities)).is_none());
-		assert!(executor::block_on(worker.claim_slot(&head, 1.into(), &authorities)).is_none());
-		assert!(executor::block_on(worker.claim_slot(&head, 2.into(), &authorities)).is_none());
-		assert!(executor::block_on(worker.claim_slot(&head, 3.into(), &authorities)).is_some());
-		assert!(executor::block_on(worker.claim_slot(&head, 4.into(), &authorities)).is_none());
-		assert!(executor::block_on(worker.claim_slot(&head, 5.into(), &authorities)).is_none());
-		assert!(executor::block_on(worker.claim_slot(&head, 6.into(), &authorities)).is_none());
-		assert!(executor::block_on(worker.claim_slot(&head, 7.into(), &authorities)).is_some());
-	}
-
-	#[test]
-	fn on_slot_returns_correct_block() {
-		let net = JasmineTestNet::new(4);
-
-		let keystore_path = tempfile::tempdir().expect("Creates keystore path");
-		let keystore = LocalKeystore::open(keystore_path.path(), None).expect("Creates keystore.");
-		SyncCryptoStore::sr25519_generate_new(
-			&keystore,
-			AuthorityPair::ID,
-			Some(&Keyring::Alice.to_seed()),
-		)
-		.expect("Key should be created");
-
-		let net = Arc::new(Mutex::new(net));
-
-		let mut net = net.lock();
-		let peer = net.peer(3);
-		let client = peer.client().as_client();
-		let environ = DummyFactory(client.clone());
-
-		let mut worker = JasmineWorker {
-			client: client.clone(),
-			block_import: client.clone(),
-			env: environ,
-			keystore: keystore.into(),
-			sync_oracle: DummyOracle.clone(),
-			justification_sync_link: (),
-			force_authoring: false,
-			backoff_authoring_blocks: Option::<()>::None,
-			telemetry: None,
-			_key_type: PhantomData::<AuthorityPair>,
-			block_proposal_slot_portion: SlotProportion::new(0.5),
-			max_block_proposal_slot_portion: None,
-		};
-
-		let head = client.header(&BlockId::Number(0)).unwrap().unwrap();
-
-		let res = executor::block_on(worker.on_slot(SlotInfo {
-			slot: 0.into(),
-			timestamp: 0.into(),
-			ends_at: Instant::now() + Duration::from_secs(100),
-			inherent_data: InherentData::new(),
-			duration: Duration::from_millis(1000),
-			chain_head: head,
-			block_size_limit: None,
-		}))
-		.unwrap();
-
-		// The returned block should be imported and we should be able to get its header by now.
-		assert!(client.header(&BlockId::Hash(res.block.hash())).unwrap().is_some());
-	}
+	// use super::*;
+	// use futures::executor;
+	// use parking_lot::Mutex;
+	// use sc_block_builder::BlockBuilderProvider;
+	// use sc_client_api::BlockchainEvents;
+	// use sc_consensus::BoxJustificationImport;
+	// use sc_consensus_events::{BackoffAuthoringOnFinalizedHeadLagging, SimpleSlotWorker};
+	// use sc_keystore::LocalKeystore;
+	// use sc_network::config::ProtocolConfig;
+	// use sc_network_test::{Block as TestBlock, *};
+	// use sp_application_crypto::key_types::JASMINE;
+	// use sp_consensus::{
+	// 	AlwaysCanAuthor, DisableProofRecording, NoNetwork as DummyOracle, Proposal,
+	// };
+	// use sp_consensus_jasmine::sr25519::AuthorityPair;
+	// use sp_inherents::InherentData;
+	// use sp_keyring::sr25519::Keyring;
+	// use sp_runtime::{
+	// 	traits::{Block as BlockT, Header as _},
+	// 	Digest,
+	// };
+	// use sp_timestamp::InherentDataProvider as TimestampInherentDataProvider;
+	// use std::{
+	// 	task::Poll,
+	// 	time::{Duration, Instant},
+	// };
+	// use substrate_test_runtime_client::{
+	// 	runtime::{Header, H256},
+	// 	TestClient,
+	// };
+	//
+	// type Error = sp_blockchain::Error;
+	//
+	// struct DummyFactory(Arc<TestClient>);
+	// struct DummyProposer(u64, Arc<TestClient>);
+	//
+	// impl Environment<TestBlock> for DummyFactory {
+	// 	type Proposer = DummyProposer;
+	// 	type CreateProposer = futures::future::Ready<Result<DummyProposer, Error>>;
+	// 	type Error = Error;
+	//
+	// 	fn init(&mut self, parent_header: &<TestBlock as BlockT>::Header) -> Self::CreateProposer {
+	// 		futures::future::ready(Ok(DummyProposer(parent_header.number + 1, self.0.clone())))
+	// 	}
+	// }
+	//
+	// impl Proposer<TestBlock> for DummyProposer {
+	// 	type Error = Error;
+	// 	type Transaction =
+	// 		sc_client_api::TransactionFor<substrate_test_runtime_client::Backend, TestBlock>;
+	// 	type Proposal = future::Ready<Result<Proposal<TestBlock, Self::Transaction, ()>, Error>>;
+	// 	type ProofRecording = DisableProofRecording;
+	// 	type Proof = ();
+	//
+	// 	fn propose(
+	// 		self,
+	// 		_: InherentData,
+	// 		digests: Digest,
+	// 		_: Duration,
+	// 		_: Option<usize>,
+	// 	) -> Self::Proposal {
+	// 		let r = self.1.new_block(digests).unwrap().build().map_err(|e| e.into());
+	//
+	// 		future::ready(r.map(|b| Proposal {
+	// 			block: b.block,
+	// 			proof: (),
+	// 			storage_changes: b.storage_changes,
+	// 		}))
+	// 	}
+	// }
+	//
+	// const SLOT_DURATION: u64 = 1000;
+	//
+	// type JasmineVerifier = import_queue::JasmineVerifier<
+	// 	PeersFullClient,
+	// 	AuthorityPair,
+	// 	AlwaysCanAuthor,
+	// 	Box<
+	// 		dyn CreateInherentDataProviders<
+	// 			TestBlock,
+	// 			(),
+	// 			InherentDataProviders = (TimestampInherentDataProvider, InherentDataProvider),
+	// 		>,
+	// 	>,
+	// >;
+	// type JasminePeer = Peer<(), PeersClient>;
+	//
+	// pub struct JasmineTestNet {
+	// 	peers: Vec<JasminePeer>,
+	// }
+	//
+	// impl TestNetFactory for JasmineTestNet {
+	// 	type Verifier = JasmineVerifier;
+	// 	type PeerData = ();
+	// 	type BlockImport = PeersClient;
+	//
+	// 	/// Create new test network with peers and given config.
+	// 	fn from_config(_config: &ProtocolConfig) -> Self {
+	// 		JasmineTestNet { peers: Vec::new() }
+	// 	}
+	//
+	// 	fn make_verifier(
+	// 		&self,
+	// 		client: PeersClient,
+	// 		_cfg: &ProtocolConfig,
+	// 		_peer_data: &(),
+	// 	) -> Self::Verifier {
+	// 		let client = client.as_client();
+	// 		let slot_duration = slot_duration(&*client).expect("slot duration available");
+	//
+	// 		assert_eq!(slot_duration.as_millis() as u64, SLOT_DURATION);
+	// 		import_queue::JasmineVerifier::new(
+	// 			client,
+	// 			Box::new(|_, _| async {
+	// 				let timestamp = TimestampInherentDataProvider::from_system_time();
+	// 				let slot = InherentDataProvider::from_timestamp_and_slot_duration(
+	// 					*timestamp,
+	// 					SlotDuration::from_millis(6000),
+	// 				);
+	//
+	// 				Ok((timestamp, slot))
+	// 			}),
+	// 			AlwaysCanAuthor,
+	// 			CheckForEquivocation::Yes,
+	// 			None,
+	// 		)
+	// 	}
+	//
+	// 	fn make_block_import(
+	// 		&self,
+	// 		client: PeersClient,
+	// 	) -> (
+	// 		BlockImportAdapter<Self::BlockImport>,
+	// 		Option<BoxJustificationImport<Block>>,
+	// 		Self::PeerData,
+	// 	) {
+	// 		(client.as_block_import(), None, ())
+	// 	}
+	//
+	// 	fn peer(&mut self, i: usize) -> &mut JasminePeer {
+	// 		&mut self.peers[i]
+	// 	}
+	//
+	// 	fn peers(&self) -> &Vec<JasminePeer> {
+	// 		&self.peers
+	// 	}
+	// 	fn mut_peers<F: FnOnce(&mut Vec<JasminePeer>)>(&mut self, closure: F) {
+	// 		closure(&mut self.peers);
+	// 	}
+	// }
+	//
+	// #[test]
+	// fn authoring_blocks() {
+	// 	sp_tracing::try_init_simple();
+	// 	let net = JasmineTestNet::new(3);
+	//
+	// 	let peers = &[(0, Keyring::Alice), (1, Keyring::Bob), (2, Keyring::Charlie)];
+	//
+	// 	let net = Arc::new(Mutex::new(net));
+	// 	let mut import_notifications = Vec::new();
+	// 	let mut jasmine_futures = Vec::new();
+	//
+	// 	let mut keystore_paths = Vec::new();
+	// 	for (peer_id, key) in peers {
+	// 		let mut net = net.lock();
+	// 		let peer = net.peer(*peer_id);
+	// 		let client = peer.client().as_client();
+	// 		let select_chain = peer.select_chain().expect("full client has a select chain");
+	// 		let keystore_path = tempfile::tempdir().expect("Creates keystore path");
+	// 		let keystore = Arc::new(
+	// 			LocalKeystore::open(keystore_path.path(), None).expect("Creates keystore."),
+	// 		);
+	//
+	// 		SyncCryptoStore::sr25519_generate_new(&*keystore, JASMINE, Some(&key.to_seed()))
+	// 			.expect("Creates authority key");
+	// 		keystore_paths.push(keystore_path);
+	//
+	// 		let environ = DummyFactory(client.clone());
+	// 		import_notifications.push(
+	// 			client
+	// 				.import_notification_stream()
+	// 				.take_while(|n| {
+	// 					future::ready(!(n.origin != BlockOrigin::Own && n.header.number() < &5))
+	// 				})
+	// 				.for_each(move |_| future::ready(())),
+	// 		);
+	//
+	// 		let slot_duration = slot_duration(&*client).expect("slot duration available");
+	//
+	// 		jasmine_futures.push(
+	// 			start_jasmine::<AuthorityPair, _, _, _, _, _, _, _, _, _, _, _>(
+	// 				StartJasmineParams {
+	// 					slot_duration,
+	// 					block_import: client.clone(),
+	// 					select_chain,
+	// 					client,
+	// 					proposer_factory: environ,
+	// 					sync_oracle: DummyOracle,
+	// 					justification_sync_link: (),
+	// 					create_inherent_data_providers: |_, _| async {
+	// 						let timestamp = TimestampInherentDataProvider::from_system_time();
+	// 						let slot = InherentDataProvider::from_timestamp_and_slot_duration(
+	// 							*timestamp,
+	// 							SlotDuration::from_millis(6000),
+	// 						);
+	//
+	// 						Ok((timestamp, slot))
+	// 					},
+	// 					force_authoring: false,
+	// 					backoff_authoring_blocks: Some(
+	// 						BackoffAuthoringOnFinalizedHeadLagging::default(),
+	// 					),
+	// 					keystore,
+	// 					can_author_with: sp_consensus::AlwaysCanAuthor,
+	// 					block_proposal_slot_portion: SlotProportion::new(0.5),
+	// 					max_block_proposal_slot_portion: None,
+	// 					telemetry: None,
+	// 				},
+	// 			)
+	// 			.expect("Starts jasmine"),
+	// 		);
+	// 	}
+	//
+	// 	executor::block_on(future::select(
+	// 		future::poll_fn(move |cx| {
+	// 			net.lock().poll(cx);
+	// 			Poll::<()>::Pending
+	// 		}),
+	// 		future::select(
+	// 			future::join_all(jasmine_futures),
+	// 			future::join_all(import_notifications),
+	// 		),
+	// 	));
+	// }
+	//
+	// #[test]
+	// fn authorities_call_works() {
+	// 	let client = substrate_test_runtime_client::new();
+	//
+	// 	assert_eq!(client.chain_info().best_number, 0);
+	// 	assert_eq!(
+	// 		authorities(&client, &BlockId::Number(0)).unwrap(),
+	// 		vec![
+	// 			Keyring::Alice.public().into(),
+	// 			Keyring::Bob.public().into(),
+	// 			Keyring::Charlie.public().into()
+	// 		]
+	// 	);
+	// }
+	//
+	// #[test]
+	// fn current_node_authority_should_claim_slot() {
+	// 	let net = JasmineTestNet::new(4);
+	//
+	// 	let mut authorities = vec![
+	// 		Keyring::Alice.public().into(),
+	// 		Keyring::Bob.public().into(),
+	// 		Keyring::Charlie.public().into(),
+	// 	];
+	//
+	// 	let keystore_path = tempfile::tempdir().expect("Creates keystore path");
+	// 	let keystore = LocalKeystore::open(keystore_path.path(), None).expect("Creates keystore.");
+	// 	let public = SyncCryptoStore::sr25519_generate_new(&keystore, AuthorityPair::ID, None)
+	// 		.expect("Key should be created");
+	// 	authorities.push(public.into());
+	//
+	// 	let net = Arc::new(Mutex::new(net));
+	//
+	// 	let mut net = net.lock();
+	// 	let peer = net.peer(3);
+	// 	let client = peer.client().as_client();
+	// 	let environ = DummyFactory(client.clone());
+	//
+	// 	let worker = JasmineWorker {
+	// 		client: client.clone(),
+	// 		block_import: client,
+	// 		env: environ,
+	// 		keystore: keystore.into(),
+	// 		sync_oracle: DummyOracle.clone(),
+	// 		justification_sync_link: (),
+	// 		force_authoring: false,
+	// 		backoff_authoring_blocks: Some(BackoffAuthoringOnFinalizedHeadLagging::default()),
+	// 		telemetry: None,
+	// 		_key_type: PhantomData::<AuthorityPair>,
+	// 		block_proposal_slot_portion: SlotProportion::new(0.5),
+	// 		max_block_proposal_slot_portion: None,
+	// 	};
+	//
+	// 	let head = Header::new(
+	// 		1,
+	// 		H256::from_low_u64_be(0),
+	// 		H256::from_low_u64_be(0),
+	// 		Default::default(),
+	// 		Default::default(),
+	// 	);
+	// 	assert!(executor::block_on(worker.claim_slot(&head, 0.into(), &authorities)).is_none());
+	// 	assert!(executor::block_on(worker.claim_slot(&head, 1.into(), &authorities)).is_none());
+	// 	assert!(executor::block_on(worker.claim_slot(&head, 2.into(), &authorities)).is_none());
+	// 	assert!(executor::block_on(worker.claim_slot(&head, 3.into(), &authorities)).is_some());
+	// 	assert!(executor::block_on(worker.claim_slot(&head, 4.into(), &authorities)).is_none());
+	// 	assert!(executor::block_on(worker.claim_slot(&head, 5.into(), &authorities)).is_none());
+	// 	assert!(executor::block_on(worker.claim_slot(&head, 6.into(), &authorities)).is_none());
+	// 	assert!(executor::block_on(worker.claim_slot(&head, 7.into(), &authorities)).is_some());
+	// }
+	//
+	// #[test]
+	// fn on_slot_returns_correct_block() {
+	// 	let net = JasmineTestNet::new(4);
+	//
+	// 	let keystore_path = tempfile::tempdir().expect("Creates keystore path");
+	// 	let keystore = LocalKeystore::open(keystore_path.path(), None).expect("Creates keystore.");
+	// 	SyncCryptoStore::sr25519_generate_new(
+	// 		&keystore,
+	// 		AuthorityPair::ID,
+	// 		Some(&Keyring::Alice.to_seed()),
+	// 	)
+	// 	.expect("Key should be created");
+	//
+	// 	let net = Arc::new(Mutex::new(net));
+	//
+	// 	let mut net = net.lock();
+	// 	let peer = net.peer(3);
+	// 	let client = peer.client().as_client();
+	// 	let environ = DummyFactory(client.clone());
+	//
+	// 	let mut worker = JasmineWorker {
+	// 		client: client.clone(),
+	// 		block_import: client.clone(),
+	// 		env: environ,
+	// 		keystore: keystore.into(),
+	// 		sync_oracle: DummyOracle.clone(),
+	// 		justification_sync_link: (),
+	// 		force_authoring: false,
+	// 		backoff_authoring_blocks: Option::<()>::None,
+	// 		telemetry: None,
+	// 		_key_type: PhantomData::<AuthorityPair>,
+	// 		block_proposal_slot_portion: SlotProportion::new(0.5),
+	// 		max_block_proposal_slot_portion: None,
+	// 	};
+	//
+	// 	let head = client.header(&BlockId::Number(0)).unwrap().unwrap();
+	//
+	// 	let res = executor::block_on(worker.on_slot(SlotInfo {
+	// 		slot: 0.into(),
+	// 		timestamp: 0.into(),
+	// 		ends_at: Instant::now() + Duration::from_secs(100),
+	// 		inherent_data: InherentData::new(),
+	// 		duration: Duration::from_millis(1000),
+	// 		chain_head: head,
+	// 		block_size_limit: None,
+	// 	}))
+	// 	.unwrap();
+	//
+	// 	// The returned block should be imported and we should be able to get its header by now.
+	// 	assert!(client.header(&BlockId::Hash(res.block.hash())).unwrap().is_some());
+	// }
 }

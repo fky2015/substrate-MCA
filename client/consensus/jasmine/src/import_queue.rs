@@ -18,7 +18,7 @@
 
 //! Module implementing the logic for verifying and importing AuRa blocks.
 
-use crate::{aura_err, authorities, find_pre_digest, slot_author, AuthorityId, Error};
+use crate::{jasmine_err, authorities, find_pre_digest, slot_author, AuthorityId, Error};
 use codec::{Codec, Decode, Encode};
 use log::{debug, info, trace};
 use prometheus_endpoint::Registry;
@@ -37,7 +37,7 @@ use sp_blockchain::{
 };
 use sp_consensus::{CanAuthorWith, Error as ConsensusError};
 use sp_consensus_jasmine::{
-	digests::CompatibleDigestItem, inherents::JasmineInherentData, JasmineApi, ConsensusLog,
+	digests::CompatibleDigestItem, inherents::JasmineInherentData, AuraApi, ConsensusLog,
 	JASMINE_ENGINE_ID,
 };
 use sp_consensus_slots::Slot;
@@ -54,7 +54,7 @@ use std::{fmt::Debug, hash::Hash, marker::PhantomData, sync::Arc};
 /// will be returned. If it's successful, returns the pre-header and the digest item
 /// containing the seal.
 ///
-/// This digest item will always return `Some` when used with `as_aura_seal`.
+/// This digest item will always return `Some` when used with `as_jasmine_seal`.
 fn check_header<C, B: BlockT, P: Pair>(
 	client: &C,
 	slot_now: Slot,
@@ -70,7 +70,7 @@ where
 {
 	let seal = header.digest_mut().pop().ok_or(Error::HeaderUnsealed(hash))?;
 
-	let sig = seal.as_aura_seal().ok_or_else(|| aura_err(Error::HeaderBadSeal(hash)))?;
+	let sig = seal.as_aura_seal().ok_or_else(|| jasmine_err(Error::HeaderBadSeal(hash)))?;
 
 	let slot = find_pre_digest::<B, P::Signature>(&header)?;
 
@@ -92,7 +92,7 @@ where
 						.map_err(Error::Client)?
 				{
 					info!(
-						target: "aura",
+						target: "jasmine",
 						"Slot author is equivocating at slot {} with headers {:?} and {:?}",
 						slot,
 						equivocation_proof.first_header.hash(),
@@ -159,7 +159,7 @@ where
 	{
 		if let Err(e) = self.can_author_with.can_author_with(&block_id) {
 			debug!(
-				target: "aura",
+				target: "jasmine",
 				"Skipping `check_inherents` as authoring version is not compatible: {}",
 				e,
 			);
@@ -190,7 +190,7 @@ where
 impl<B: BlockT, C, P, CAW, CIDP> Verifier<B> for JasmineVerifier<C, P, CAW, CIDP>
 where
 	C: ProvideRuntimeApi<B> + Send + Sync + sc_client_api::backend::AuxStore + BlockOf,
-	C::Api: BlockBuilderApi<B> + JasmineApi<B, AuthorityId<P>> + ApiExt<B>,
+	C::Api: BlockBuilderApi<B> + AuraApi<B, AuthorityId<P>> + ApiExt<B>,
 	P: Pair + Send + Sync + 'static,
 	P::Public: Send + Sync + Hash + Eq + Clone + Decode + Encode + Debug + 'static,
 	P::Signature: Encode + Decode,
@@ -266,11 +266,11 @@ where
 					block.body = Some(inner_body);
 				}
 
-				trace!(target: "aura", "Checked {:?}; importing.", pre_header);
+				trace!(target: "jasmine", "Checked {:?}; importing.", pre_header);
 				telemetry!(
 					self.telemetry;
 					CONSENSUS_TRACE;
-					"aura.checked_and_importing";
+					"jasmine.checked_and_importing";
 					"pre_header" => ?pre_header,
 				);
 
@@ -298,11 +298,11 @@ where
 				Ok((block, maybe_keys))
 			},
 			CheckedHeader::Deferred(a, b) => {
-				debug!(target: "aura", "Checking {:?} failed; {:?}, {:?}.", hash, a, b);
+				debug!(target: "jasmine", "Checking {:?} failed; {:?}, {:?}.", hash, a, b);
 				telemetry!(
 					self.telemetry;
 					CONSENSUS_DEBUG;
-					"aura.header_too_far_in_future";
+					"jasmine.header_too_far_in_future";
 					"hash" => ?hash,
 					"a" => ?a,
 					"b" => ?b,
@@ -375,7 +375,7 @@ pub fn import_queue<P, Block, I, C, S, CAW, CIDP>(
 ) -> Result<DefaultImportQueue<Block, C>, sp_consensus::Error>
 where
 	Block: BlockT,
-	C::Api: BlockBuilderApi<Block> + JasmineApi<Block, AuthorityId<P>> + ApiExt<Block>,
+	C::Api: BlockBuilderApi<Block> + AuraApi<Block, AuthorityId<P>> + ApiExt<Block>,
 	C: 'static
 		+ ProvideRuntimeApi<Block>
 		+ BlockOf

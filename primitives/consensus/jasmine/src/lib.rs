@@ -83,7 +83,7 @@ pub enum ConsensusLog<AuthorityId: Codec> {
 
 sp_api::decl_runtime_apis! {
 	/// API necessary for block authorship with aura.
-	pub trait JasmineApi<AuthorityId: Codec> {
+	pub trait AuraApi<AuthorityId: Codec> {
 		/// Returns the slot duration for Jasmine.
 		///
 		/// Currently, only the value provided by this type at genesis will be used.
