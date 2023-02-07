@@ -290,15 +290,16 @@ where
 		round: u64,
 		state: voter::CurrentState<Self::Number, Self::Hash, Self::Signature, Self::Id>,
 	) {
+		debug!(target: "afj", "update_state: round: {}, state: {:?}", round, state);
 		match state {
 			voter::CurrentState::Voter => {
-				self.leader_info.lock().become_follower();
+				self.leader_info.lock().become_follower(round);
 			},
 			voter::CurrentState::Leader => {
-				self.leader_info.lock().become_leader();
+				self.leader_info.lock().become_leader(round);
 			},
 			voter::CurrentState::LeaderWithQC(qc) => {
-				self.leader_info.lock().become_leader_with_qc((qc.height, qc.hash));
+				self.leader_info.lock().become_leader_with_qc(round, (qc.height, qc.hash));
 			},
 		}
 	}
@@ -345,7 +346,7 @@ where
 				return None
 			}
 
-            // Genesis block.
+			// Genesis block.
 			if parent_header.number() == &Zero::zero() {
 				return Some((
 					Zero::zero(),

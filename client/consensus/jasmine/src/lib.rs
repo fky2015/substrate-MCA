@@ -33,7 +33,7 @@
 use std::{fmt::Debug, hash::Hash, marker::PhantomData, pin::Pin, sync::Arc};
 
 use futures::prelude::*;
-use log::{debug, trace};
+use log::{debug, info, trace};
 
 use codec::{Codec, Decode, Encode};
 
@@ -71,7 +71,7 @@ pub use sp_consensus::SyncOracle;
 pub use sp_consensus_jasmine::{
 	digests::CompatibleDigestItem,
 	inherents::{InherentDataProvider, InherentType as JasmineInherent, INHERENT_IDENTIFIER},
-	ConsensusLog, AuraApi, SlotDuration, JASMINE_ENGINE_ID,
+	AuraApi, ConsensusLog, SlotDuration, JASMINE_ENGINE_ID,
 };
 use sp_finality_jasmine::{LeaderInfo, SharedLeaderInfo};
 
@@ -90,12 +90,17 @@ where
 }
 
 /// Get slot author for given block along with authorities.
-fn slot_author<P: Pair>(slot: Slot, authorities: &[AuthorityId<P>]) -> Option<&AuthorityId<P>> {
+fn slot_author<P: Pair>(round: u64, authorities: &[AuthorityId<P>]) -> Option<&AuthorityId<P>>
+where
+	<P as sp_application_crypto::Pair>::Public: std::fmt::Debug,
+{
 	if authorities.is_empty() {
 		return None
 	}
 
-	let idx = *slot % (authorities.len() as u64);
+	info!("authorities: {:?}", authorities);
+
+	let idx = round % (authorities.len() as u64);
 	assert!(
 		idx <= usize::MAX as u64,
 		"It is impossible to have a vector with length beyond the address space; qed",
@@ -145,7 +150,7 @@ pub struct StartJasmineParams<C, SC, I, PF, SO, L, CIDP, BS, CAW, B: BlockT> {
 	pub max_block_proposal_slot_portion: Option<SlotProportion>,
 	/// Telemetry instance used to report telemetry metrics.
 	pub telemetry: Option<TelemetryHandle>,
-    /// Leader info
+	/// Leader info
 	pub leader_info: SharedLeaderInfo<B>,
 }
 
@@ -243,7 +248,7 @@ pub struct BuildJasmineWorkerParams<C, I, PF, SO, L, BS, B: BlockT> {
 	pub max_block_proposal_slot_portion: Option<SlotProportion>,
 	/// Telemetry instance used to report telemetry metrics.
 	pub telemetry: Option<TelemetryHandle>,
-    /// Leader info
+	/// Leader info
 	pub leader_info: SharedLeaderInfo<B>,
 }
 
@@ -373,9 +378,11 @@ where
 		&self,
 		_header: &B::Header,
 		slot: Slot,
+		round: u64,
 		epoch_data: &Self::EpochData,
 	) -> Option<Self::Claim> {
-		let expected_author = slot_author::<P>(slot, epoch_data);
+		let expected_author = slot_author::<P>(round, epoch_data);
+		info!(target: "afj", "expected_author: {:?}, round: {:?}", expected_author, round);
 		expected_author.and_then(|p| {
 			if SyncCryptoStore::has_keys(
 				&*self.keystore,

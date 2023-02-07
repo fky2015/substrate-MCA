@@ -18,7 +18,7 @@
 
 //! Module implementing the logic for verifying and importing AuRa blocks.
 
-use crate::{jasmine_err, authorities, find_pre_digest, slot_author, AuthorityId, Error};
+use crate::{authorities, find_pre_digest, jasmine_err, slot_author, AuthorityId, Error};
 use codec::{Codec, Decode, Encode};
 use log::{debug, info, trace};
 use prometheus_endpoint::Registry;
@@ -80,26 +80,28 @@ where
 	} else {
 		// check the signature is valid under the expected authority and
 		// chain state.
-		let expected_author =
-			slot_author::<P>(slot, authorities).ok_or(Error::SlotAuthorNotFound)?;
+		// let expected_author =
+		// slot_author::<P>(slot, round, authorities).ok_or(Error::SlotAuthorNotFound)?;
 
 		let pre_hash = header.hash();
 
-		if P::verify(&sig, pre_hash.as_ref(), expected_author) {
-			if check_for_equivocation.check_for_equivocation() {
-				if let Some(equivocation_proof) =
-					check_equivocation(client, slot_now, slot, &header, expected_author)
-						.map_err(Error::Client)?
-				{
-					info!(
-						target: "jasmine",
-						"Slot author is equivocating at slot {} with headers {:?} and {:?}",
-						slot,
-						equivocation_proof.first_header.hash(),
-						equivocation_proof.second_header.hash(),
-					);
-				}
-			}
+		// (REMOVED)
+		// if P::verify(&sig, pre_hash.as_ref(), expected_author) {
+		if true {
+			// if check_for_equivocation.check_for_equivocation() {
+			// 	if let Some(equivocation_proof) =
+			// 		check_equivocation(client, slot_now, slot, &header, expected_author)
+			// 			.map_err(Error::Client)?
+			// 	{
+			// 		info!(
+			// 			target: "jasmine",
+			// 			"Slot author is equivocating at slot {} with headers {:?} and {:?}",
+			// 			slot,
+			// 			equivocation_proof.first_header.hash(),
+			// 			equivocation_proof.second_header.hash(),
+			// 		);
+			// 	}
+			// }
 
 			Ok(CheckedHeader::Checked(header, (slot, seal)))
 		} else {

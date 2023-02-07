@@ -162,6 +162,7 @@ pub trait SimpleSlotWorker<B: BlockT> {
 		&self,
 		header: &B::Header,
 		slot: Slot,
+		round: u64,
 		epoch_data: &Self::EpochData,
 	) -> Option<Self::Claim>;
 
@@ -231,7 +232,7 @@ pub trait SimpleSlotWorker<B: BlockT> {
 		let leader_info = self.leader_info();
 
 		if !leader_info.is_leader().0 {
-			debug!(target: "afj", "Not leader, skip");
+			debug!(target: "afj", "Not leader, skip, leader_info: {:?}", leader_info);
 			// Not leader, skip
 			return (None, false)
 		}
@@ -290,7 +291,10 @@ pub trait SimpleSlotWorker<B: BlockT> {
 			return (None, false)
 		}
 
-		let claim = self.claim_slot(&slot_info.chain_head, slot, &epoch_data).await.unwrap();
+		let claim = self
+			.claim_slot(&slot_info.chain_head, slot, leader_info.get_round(), &epoch_data)
+			.await
+			.unwrap();
 
 		if self.should_backoff(slot, &slot_info.chain_head) {
 			return (None, false)

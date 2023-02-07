@@ -68,10 +68,11 @@ pub type ViewNumber = u64;
 pub type AuthorityList = Vec<AuthorityId>;
 
 #[cfg(feature = "std")]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct LeaderInfo<N, D> {
 	pub is_leader: (bool, Option<(N, D)>),
 	pub generic_qc: Option<(N, D)>,
+	pub round: u64,
 	pub notify: Arc<Notify>,
 }
 
@@ -79,18 +80,26 @@ pub struct LeaderInfo<N, D> {
 impl<N: Clone, D: Clone> LeaderInfo<N, D> {
 	pub fn new() -> Self {
 		let notify = Arc::new(Notify::new());
-		Self { is_leader: (false, None), generic_qc: None, notify }
+		Self { is_leader: (false, None), generic_qc: None, notify, round: 0 }
 	}
 
-	pub fn become_leader(&mut self) {
+	pub fn become_leader(&mut self, round: u64) {
+		if self.round >= round {
+			return
+		}
+		self.round = round;
 		self.is_leader.0 = true;
 	}
 
-	pub fn become_follower(&mut self) {
+	pub fn become_follower(&mut self, round: u64) {
+		self.round = round;
 		self.is_leader.0 = false;
 	}
 
-	pub fn become_leader_with_qc(&mut self, qc: (N, D)) {
+	pub fn become_leader_with_qc(&mut self, round: u64, qc: (N, D)) {
+		if round > self.round {
+			self.round = round;
+		}
 		self.is_leader.0 = true;
 		self.is_leader.1 = Some(qc.clone());
 		self.generic_qc = Some(qc);
@@ -114,6 +123,14 @@ impl<N: Clone, D: Clone> LeaderInfo<N, D> {
 
 	pub fn notify(&self) {
 		self.notify.notify_one();
+	}
+
+	pub fn set_round(&mut self, round: u64) {
+		self.round = round;
+	}
+
+	pub fn get_round(&self) -> u64 {
+		self.round
 	}
 }
 
