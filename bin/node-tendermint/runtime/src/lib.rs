@@ -6,6 +6,7 @@
 #[cfg(feature = "std")]
 include!(concat!(env!("OUT_DIR"), "/wasm_binary.rs"));
 
+use frame_support::traits::ConstBool;
 use pallet_tendermint::{
 	fp_primitives, AuthorityId as TendermintId, AuthorityList as TendermintAuthorityList,
 };
@@ -232,6 +233,7 @@ impl pallet_timestamp::Config for Runtime {
 	type OnTimestampSet = Aura;
 	type MinimumPeriod = ConstU64<{ SLOT_DURATION / 2 }>;
 	type WeightInfo = ();
+	type SkipTimestampCheck = ConstBool<true>;
 }
 
 impl pallet_balances::Config for Runtime {
