@@ -199,6 +199,8 @@ impl Header {
 			state_root: Default::default(),
 			parent_hash: Default::default(),
 			digest: Default::default(),
+            qc: (number, Default::default()),
+            is_key_block: true,
 		}
 	}
 }

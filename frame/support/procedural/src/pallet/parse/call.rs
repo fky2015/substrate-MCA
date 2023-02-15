@@ -170,7 +170,7 @@ impl CallDef {
 						return Err(syn::Error::new(method.sig.span(), msg))
 					},
 					Some(syn::FnArg::Typed(arg)) => {
-						check_dispatchable_first_arg_type(&*arg.ty)?;
+						check_dispatchable_first_arg_type(&arg.ty)?;
 					},
 				}
 

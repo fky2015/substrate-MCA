@@ -1121,6 +1121,8 @@ pub mod key_types {
 	pub const STAKING: KeyTypeId = KeyTypeId(*b"stak");
 	/// A key type ID useful for tests.
 	pub const DUMMY: KeyTypeId = KeyTypeId(*b"dumy");
+    
+    pub const JASMINE: KeyTypeId = KeyTypeId(*b"jasm");
 }
 
 #[cfg(test)]
