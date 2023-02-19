@@ -1,6 +1,6 @@
 # Substrate with PBFT
 
-This repo implement PBFT and Tendermint as alternatives to GRANDPA.
+This repo implement PBFT, Tendermint, and Jasmine as alternatives to GRANDPA.
 
 ## Usage
 
@@ -10,13 +10,15 @@ This repo implement PBFT and Tendermint as alternatives to GRANDPA.
 ```bash
 git clone https://github.com/bit-substrate/finality-tendermint.git
 git clone https://github.com/bit-substrate/finality-pbft.git
+git clone https://github.com/bit-substrate/finality-jasmine.git
 git clone https://github.com/bit-substrate/bit-substrate.git
 ```
 
 > NOTE: To build `cargo b --bin node-template`, you need `finality-pbft & bit-substrate`.
 > To build `cargo b --bin node-tendermint`, you need `finality-tendermint & bit-substrate`.
+> To build `cargo b --bin node-jasmine`, you need `finality-jasmine & bit-substrate`
 > 
-> Place them under the same directory.
+> Place them under a same directory.
 
 3. Build.
 
@@ -26,35 +28,49 @@ cd bit-substrate
 cargo build -p node-template
 # build Tendermint node
 cargo build -p node-tendermint
+# build Jasmine node
+cargo build -p node-jasmine
 ```
 
 4. Run node.
 
 ```bash
 ./target/debug/node-template --dev --tmp
-# or
+# or for Tendermint
 ./target/debug/node-tendermint --dev --tmp
+# or for Jasmine
+./terget/debug/node-jasmine --dev --tmp
 ```
+
+## Caveat
+
+This implementation of the algorithm is experimental and not intended for production use.
+
+The algorithm implementation does not affect upper layers. If you want to verify your 
+upper-layer works, you can always first implement it on top of [the original one][substrate-compatible].
 
 ## Test script
 
-Test scripts are in the `./pbft-test-scripts/` and `./tendermint-test-scripts/`.
+Test scripts are in the `./pbft-test-scripts/`, `./tendermint-test-scripts/`,  `./jasmine-test-scripts/`.
 Run from project root dir such as `bash ./pbft-test-scripts/single.sh`.
 
 ## Info
 
 There is a substrate-contracts-node campatible version [bit-substrate-contracts-node][substrate].
 
-This is campatible to [Substrate May 12th, 2022](https://github.com/paritytech/substrate/commit/7d233c2446b5a60662400a0a4bcfb78bb3b79ff7).
+This is campatible to [Substrate May 12th, 2022][substrate-compatible].
 
 For the PBFT implementation details, please visit [finality-pbft][pbft].
 For the Tendermint implementation details, please visit [finality-tendermint][tendermint]
-
-*In below is the origin README.*
+For the Jasmine implementation details, please visit [finality-jasmine][jasmine]
 
 [substrate]: https://github.com/bit-substrate/bit-substrate-contracts-node
 [pbft]: https://github.com/bit-substrate/finality-pbft
 [tendermint]: https://github.com/bit-substrate/finality-tendermint
+[jasmine]: https://github.com/bit-substrate/finality-jasmine
+[substrate-compatible]: https://github.com/paritytech/substrate/commit/7d233c2446b5a60662400a0a4bcfb78bb3b79ff7 
+
+*In below is the origin README.*
 
 ---
 
