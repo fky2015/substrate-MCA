@@ -8,10 +8,10 @@ This repo implement PBFT, Tendermint, and Jasmine as alternatives to GRANDPA.
 2. Clone repos. (Under the same folder)
 
 ```bash
-git clone https://github.com/bit-substrate/finality-tendermint.git
-git clone https://github.com/bit-substrate/finality-pbft.git
-git clone https://github.com/bit-substrate/finality-jasmine.git
-git clone https://github.com/bit-substrate/bit-substrate.git
+git clone https://github.com/fky2015/finality-tendermint.git
+git clone https://github.com/fky2015/finality-pbft.git
+git clone https://github.com/fky2015/finality-jasmine.git
+git clone https://github.com/fky2015/bit-substrate.git
 ```
 
 > NOTE: To build `cargo b --bin node-template`, you need `finality-pbft & bit-substrate`.
@@ -64,10 +64,10 @@ For the PBFT implementation details, please visit [finality-pbft][pbft].
 For the Tendermint implementation details, please visit [finality-tendermint][tendermint]
 For the Jasmine implementation details, please visit [finality-jasmine][jasmine]
 
-[substrate]: https://github.com/bit-substrate/bit-substrate-contracts-node
-[pbft]: https://github.com/bit-substrate/finality-pbft
-[tendermint]: https://github.com/bit-substrate/finality-tendermint
-[jasmine]: https://github.com/bit-substrate/finality-jasmine
+[substrate]: https://github.com/fky2015/bit-substrate-contracts-node
+[pbft]: https://github.com/fky2015/finality-pbft
+[tendermint]: https://github.com/fky2015/finality-tendermint
+[jasmine]: https://github.com/fky2015/finality-jasmine
 [substrate-compatible]: https://github.com/paritytech/substrate/commit/7d233c2446b5a60662400a0a4bcfb78bb3b79ff7 
 
 *In below is the origin README.*
